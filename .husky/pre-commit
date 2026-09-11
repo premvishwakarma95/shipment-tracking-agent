@@ -1,0 +1,31 @@
+#!/usr/bin/env sh
+
+# Block committing any real .env file (the example is fine).
+staged=$(git diff --cached --name-only)
+
+if echo "$staged" | grep -E '(^|/)\.env(\..*)?$' | grep -v '\.env\.example$' > /dev/null; then
+  echo "pre-commit: a .env file is staged — remove it from the commit (see .gitignore)."
+  exit 1
+fi
+
+# Grep the staged diff's added lines for secret-shaped assignments — a
+# key/secret/token/password identifier immediately followed by either a
+# quoted literal of 8+ chars, or an unquoted alnum-ish literal of 16+ chars.
+# Requiring an actual literal (not `$VAR`, not `required("VAR_NAME")`, not
+# prose) keeps this from flagging references to env var *names* — only
+# real-looking pasted values. Skips .env.example, which is expected to
+# contain variable names but not real values.
+secret_hits=$(git diff --cached -U0 -- . ':!.env.example' \
+  | grep -E '^\+' \
+  | grep -viE '^\+\+\+' \
+  | grep -iE '(api[_-]?key|secret|token|password)[[:space:]]*[:=][[:space:]]*(["'"'"'\`][^"'"'"'\`$]{8,}["'"'"'\`]|[A-Za-z0-9][A-Za-z0-9_.-]{15,})' \
+  || true)
+
+if [ -n "$secret_hits" ]; then
+  echo "pre-commit: possible secret-shaped value in staged changes:"
+  echo "$secret_hits"
+  echo "If this is a false positive, commit with --no-verify."
+  exit 1
+fi
+
+npm run typecheck
