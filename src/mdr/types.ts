@@ -1,8 +1,8 @@
-import type { CALL_STATUSES, CALL_TYPES, CONTACT_TYPES } from "../db/models/CallRequest.js";
+import type { CALL_TYPES, CONTACT_TYPES, EVENT_TYPES } from "../db/models/CallRequest.js";
 
 export type CallType = (typeof CALL_TYPES)[number];
 export type ContactType = (typeof CONTACT_TYPES)[number];
-export type CallStatus = (typeof CALL_STATUSES)[number];
+export type EventType = (typeof EVENT_TYPES)[number];
 
 export interface Contact {
   type: ContactType;
@@ -10,80 +10,101 @@ export interface Contact {
   phone: string;
 }
 
-// What MDR sends inbound on POST /mdr/call-requests. Shipment is left
+// What MDR sends inbound on POST /mdr/call-requests, per the confirmed
+// "MDR Agent 3 – Voice API Integration Guide" (§3). Shipment is left
 // permissive — MDR may send additional TAI shipment/reference fields
-// beyond this example (the client requires MDR to have shipment,
-// references, pickup/delivery, carrier, driver, timing, alert and document
-// information available, but doesn't fix the exact wire shape).
+// beyond the worked example.
 export interface CallRequestPayload {
   mdr_call_id: string;
   call_type: CallType;
   contact: Contact;
   shipment: Record<string, unknown> & {
     shipment_id?: string;
-    shipment_type?: string;
   };
-  previous_interactions?: Array<{
-    date: string;
-    contact_type: ContactType;
-    summary: string;
-  }>;
-  open_items?: string[];
+  // MDR now tells us explicitly which questions to prioritize on this call,
+  // in addition to the call type's default set (see prompt.ts).
+  questions?: string[];
+  previous_summary?: string;
+  open_issue?: string;
 }
 
-// The result envelope pushed back to MDR once a call finishes. This shape
-// is dictated by the client's own spec (§19 "Common Response Format"), not
-// by MDR's internal API — it should stay stable even once the real
-// endpoint/auth details in mdr/client.ts and mdr/api.ts are filled in.
-// Every result.* field is nullable: unknown must be null, never fabricated.
-export interface CallResultPayload {
+// The immediate ack, returned synchronously from POST /mdr/call-requests
+// before the call has actually happened (integration guide §4). MDR saves
+// all three fields.
+export interface StartCallAck {
+  success: true;
   mdr_call_id: string;
   voice_call_id: string;
-  call_type: CallType;
-  call_status: CallStatus;
-  answered: boolean;
-  contact: Contact;
-  result: {
-    driver_confirmed: boolean | null;
-    driver_assigned: boolean | null;
-    equipment_assigned: boolean | null;
-    pickup_date_confirmed: boolean | null;
-
-    location: string | null;
-    eta: string | null;
-    previous_eta: string | null;
-    eta_changed: boolean | null;
-
-    delay: boolean | null;
-    delay_minutes: number | null;
-    delay_reason: string | null;
-    traffic_issue: boolean | null;
-    weather_issue: boolean | null;
-    mechanical_issue: boolean | null;
-    issue_type: string | null;
-
-    appointment_status: "CONFIRMED" | "AT_RISK" | "UNKNOWN" | null;
-
-    // Special-case outcome fields (mirrors CallRequest.tool_flags — set
-    // mid-call via the LLM tools in src/assistant/tools.ts).
-    referred_contact: { name: string; phone: string } | null;
-    callback_requested: boolean | null;
-    callback_time: string | null;
-    email_requested: boolean | null;
-    requested_email: string | null;
-
-    // Partial capture for CALL_DROPPED — whatever was collected before the
-    // disconnect, not backfilled or guessed.
-    conversation_complete: boolean | null;
-    information_collected: Record<string, unknown> | null;
-
-    human_escalation_required: boolean | null;
-    confidence_score: number | null;
-    summary: string | null;
-    next_action: string | null;
-  };
-  recording_url: string | null;
-  transcript: string | null;
-  started_at: string | null;
-  ended_at: string | null;
+  status: "QUEUED";
 }
+
+// One common result shape shared by every call type (integration guide
+// §7A: "Use one common CALL_COMPLETED response structure ... Do not change
+// the field names or response structure for different call types"). Every
+// field nullable: true = confirmed yes, false = confirmed no, null =
+// unknown/not asked/not applicable (§7A) — never fabricated.
+//
+// `next_action` is kept even though it's absent from the one worked
+// CALL_COMPLETED example in the guide, because the guide's own prose
+// (§7, listing what the client requires) names it explicitly alongside
+// every other field that IS in the example. Flagged as unconfirmed in
+// docs/requirements-tracker.md — drop it if MDR says it's not wanted.
+export interface CommonCallResult {
+  driver_confirmed: boolean | null;
+  driver_assigned: boolean | null;
+  equipment_assigned: boolean | null;
+  pickup_completed: boolean | null;
+  pickup_completed_at: string | null;
+  delivery_completed: boolean | null;
+  current_location: string | null;
+  eta: string | null;
+  delay: boolean | null;
+  delay_minutes: number | null;
+  delay_reason: string | null;
+  issue_type: string | null;
+  appointment_status: "CONFIRMED" | "NOT_CONFIRMED" | "COMPLETED" | "MISSED" | "UNKNOWN" | null;
+  human_escalation_required: boolean;
+  escalation_reason: string | null;
+  confidence_score: number | null;
+  summary: string | null;
+  next_action: string | null;
+}
+
+interface WebhookEventBase {
+  mdr_call_id: string;
+  voice_call_id: string | null;
+}
+
+// The single MDR webhook (integration guide §5, §10, §13) takes a
+// different payload shape per event_type — this is NOT one universal
+// envelope with a status enum. VOICEMAIL/BUSY/CALL_FAILED are assumed to
+// share NO_ANSWER's minimal shape (the guide lists them together in §5 but
+// only shows a worked example for NO_ANSWER) — flagged as an assumption in
+// docs/requirements-tracker.md.
+export type VoiceWebhookEvent =
+  | (WebhookEventBase & { event_type: "NO_ANSWER" })
+  | (WebhookEventBase & { event_type: "VOICEMAIL" })
+  | (WebhookEventBase & { event_type: "BUSY" })
+  | (WebhookEventBase & { event_type: "CALL_FAILED" })
+  | (WebhookEventBase & {
+      event_type: "CALL_DROPPED";
+      partial_result: Partial<CommonCallResult>;
+      summary: string | null;
+    })
+  | (WebhookEventBase & {
+      event_type: "CALLBACK_REQUESTED";
+      callback_after_minutes: number | null;
+      summary: string | null;
+    })
+  | (WebhookEventBase & {
+      event_type: "WRONG_CONTACT";
+      referred_contact: { name: string; phone: string };
+    })
+  | (WebhookEventBase & {
+      event_type: "CALL_COMPLETED";
+      call_type: CallType;
+      call_status: "COMPLETED";
+      result: CommonCallResult;
+      recording_url: string | null;
+      transcript: string | null;
+    });

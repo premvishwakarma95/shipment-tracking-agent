@@ -13,12 +13,16 @@ fi
 # quoted literal of 8+ chars, or an unquoted alnum-ish literal of 16+ chars.
 # Requiring an actual literal (not `$VAR`, not `required("VAR_NAME")`, not
 # prose) keeps this from flagging references to env var *names* — only
-# real-looking pasted values. Skips .env.example, which is expected to
-# contain variable names but not real values.
+# real-looking pasted values. Also excludes `process.env.X` reads (e.g.
+# `const authToken = process.env.MDR_API_AUTH_TOKEN`) — the unquoted-value
+# branch's allowance for dots otherwise reads a property-access expression
+# as if it were a literal. Skips .env.example, which is expected to contain
+# variable names but not real values.
 secret_hits=$(git diff --cached -U0 -- . ':!.env.example' \
   | grep -E '^\+' \
   | grep -viE '^\+\+\+' \
   | grep -iE '(api[_-]?key|secret|token|password)[[:space:]]*[:=][[:space:]]*(["'"'"'\`][^"'"'"'\`$]{8,}["'"'"'\`]|[A-Za-z0-9][A-Za-z0-9_.-]{15,})' \
+  | grep -v 'process\.env' \
   || true)
 
 if [ -n "$secret_hits" ]; then

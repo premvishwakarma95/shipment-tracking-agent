@@ -1,7 +1,7 @@
 import { CallRequest, type CallRequestDoc } from "../db/models/CallRequest.js";
-import { classifyCallStatus } from "./callOutcome.js";
-import { pushCallResult } from "../mdr/api.js";
-import type { CallResultPayload } from "../mdr/types.js";
+import { classifyEventType } from "./callOutcome.js";
+import { sendVoiceWebhookEvent } from "../mdr/api.js";
+import type { CommonCallResult, VoiceWebhookEvent } from "../mdr/types.js";
 
 // Vapi's inbound webhook message shapes are permissive/`any`-typed here —
 // this is an external contract we don't control the exact fields of, and
@@ -62,14 +62,17 @@ function applyToolCall(doc: CallRequestDoc, call: VapiToolCall) {
       return;
     case "reportCallbackRequested":
       doc.tool_flags.callback_requested = true;
-      doc.tool_flags.callback_time = (args.callback_time as string) ?? null;
+      doc.tool_flags.callback_after_minutes = (args.callback_after_minutes as number) ?? null;
       return;
     case "reportEmailRequested":
+      // No confirmed MDR event_type for this yet — kept for internal
+      // visibility only, see docs/requirements-tracker.md.
       doc.tool_flags.email_requested = true;
       doc.tool_flags.requested_email = (args.requested_email as string) ?? null;
       return;
     case "flagHumanEscalation":
       doc.tool_flags.human_escalation_required = true;
+      doc.tool_flags.escalation_reason = (args.escalation_reason as string) ?? null;
       return;
     default:
       throw new Error(`unknown tool: ${call.function.name}`);
@@ -92,25 +95,24 @@ export async function handleEndOfCallReport(message: {
   }
 
   const structured = message.analysis?.structuredData ?? {};
-  const callStatus = classifyCallStatus(message.endedReason, doc.tool_flags);
-  const answered = callStatus !== "NO_ANSWER" && callStatus !== "BUSY";
+  const eventType = classifyEventType(message.endedReason, doc.tool_flags);
 
   doc.structured_result = structured;
-  doc.call_status = callStatus;
+  doc.event_type = eventType;
   doc.recording_url = message.recordingUrl ?? null;
   doc.transcript = message.transcript ?? null;
   doc.started_at = message.startedAt ? new Date(message.startedAt) : null;
   doc.ended_at = message.endedAt ? new Date(message.endedAt) : null;
   doc.lifecycle_status = "COMPLETED";
 
-  const payload = assembleResultPayload(doc, structured, callStatus, answered);
+  const event = buildWebhookEvent(doc, structured, eventType);
   await doc.save();
 
   // Idempotency guard: if a retried end-of-call-report webhook arrives
   // (Vapi retries on non-2xx), don't push to MDR twice.
   if (doc.mdr_pushed_at) return;
 
-  const pushed = await pushCallResult(payload);
+  const pushed = await sendVoiceWebhookEvent(event);
   if (pushed) {
     doc.mdr_pushed_at = new Date();
     await doc.save();
@@ -119,68 +121,103 @@ export async function handleEndOfCallReport(message: {
   // see docs/requirements-tracker.md. No retry queue in v1.
 }
 
-function assembleResultPayload(
+// Builds a common result (used for both CALL_COMPLETED.result and
+// CALL_DROPPED.partial_result) from the post-call structured extraction,
+// cross-checked against tool_flags for escalation (see
+// src/assistant/resultSchema.ts for why both signals are combined).
+function buildCommonResult(
+  structured: Record<string, unknown>,
+  toolFlags: CallRequestDoc["tool_flags"],
+): CommonCallResult {
+  return {
+    driver_confirmed: (structured.driver_confirmed as boolean) ?? null,
+    driver_assigned: (structured.driver_assigned as boolean) ?? null,
+    equipment_assigned: (structured.equipment_assigned as boolean) ?? null,
+    pickup_completed: (structured.pickup_completed as boolean) ?? null,
+    pickup_completed_at: (structured.pickup_completed_at as string) ?? null,
+    delivery_completed: (structured.delivery_completed as boolean) ?? null,
+
+    current_location: (structured.current_location as string) ?? null,
+    eta: (structured.eta as string) ?? null,
+
+    delay: (structured.delay as boolean) ?? null,
+    delay_minutes: (structured.delay_minutes as number) ?? null,
+    delay_reason: (structured.delay_reason as string) ?? null,
+    issue_type: (structured.issue_type as string) ?? null,
+
+    appointment_status:
+      (structured.appointment_status as CommonCallResult["appointment_status"]) ?? null,
+
+    // Both signals combined: the in-call tool (immediate, LLM-decided) and
+    // the post-call extraction (a backstop in case the tool wasn't called
+    // but the transcript shows an escalation-worthy issue on review).
+    human_escalation_required:
+      Boolean(toolFlags?.human_escalation_required) ||
+      Boolean(structured.human_escalation_required),
+    escalation_reason:
+      (toolFlags?.escalation_reason as string) ?? (structured.escalation_reason as string) ?? null,
+
+    confidence_score: (structured.confidence_score as number) ?? null,
+    summary: (structured.summary as string) ?? null,
+    next_action: (structured.next_action as string) ?? null,
+  };
+}
+
+function buildWebhookEvent(
   doc: CallRequestDoc,
   structured: Record<string, unknown>,
-  callStatus: CallResultPayload["call_status"],
-  answered: boolean,
-): CallResultPayload {
-  const shipment = doc.shipment as Record<string, unknown>;
-  const previousEta = (shipment?.current_eta as string) ?? null;
-  const eta = (structured.eta as string) ?? null;
+  eventType: VoiceWebhookEvent["event_type"],
+): VoiceWebhookEvent {
+  const voiceCallId = doc.vapi_call_id ?? null;
 
-  return {
-    mdr_call_id: doc.mdr_call_id,
-    voice_call_id: doc.vapi_call_id ?? "",
-    call_type: doc.call_type,
-    call_status: callStatus,
-    answered,
-    contact: doc.contact,
-    result: {
-      driver_confirmed: (structured.driver_confirmed as boolean) ?? null,
-      driver_assigned: (structured.driver_assigned as boolean) ?? null,
-      equipment_assigned: (structured.equipment_assigned as boolean) ?? null,
-      pickup_date_confirmed: (structured.pickup_date_confirmed as boolean) ?? null,
+  switch (eventType) {
+    case "NO_ANSWER":
+    case "VOICEMAIL":
+    case "BUSY":
+    case "CALL_FAILED":
+      return { event_type: eventType, mdr_call_id: doc.mdr_call_id, voice_call_id: voiceCallId };
 
-      location: (structured.location as string) ?? null,
-      eta,
-      previous_eta: previousEta,
-      eta_changed: previousEta !== null && eta !== null ? previousEta !== eta : null,
+    case "CALL_DROPPED": {
+      const result = buildCommonResult(structured, doc.tool_flags);
+      return {
+        event_type: "CALL_DROPPED",
+        mdr_call_id: doc.mdr_call_id,
+        voice_call_id: voiceCallId,
+        partial_result: result,
+        summary: result.summary,
+      };
+    }
 
-      delay: (structured.delay as boolean) ?? null,
-      delay_minutes: (structured.delay_minutes as number) ?? null,
-      delay_reason: (structured.delay_reason as string) ?? null,
-      traffic_issue: (structured.traffic_issue as boolean) ?? null,
-      weather_issue: (structured.weather_issue as boolean) ?? null,
-      mechanical_issue: (structured.mechanical_issue as boolean) ?? null,
-      issue_type: (structured.issue_type as string) ?? null,
+    case "CALLBACK_REQUESTED":
+      return {
+        event_type: "CALLBACK_REQUESTED",
+        mdr_call_id: doc.mdr_call_id,
+        voice_call_id: voiceCallId,
+        callback_after_minutes: doc.tool_flags.callback_after_minutes ?? null,
+        summary: (structured.summary as string) ?? null,
+      };
 
-      appointment_status:
-        (structured.appointment_status as CallResultPayload["result"]["appointment_status"]) ??
-        null,
+    case "WRONG_CONTACT":
+      return {
+        event_type: "WRONG_CONTACT",
+        mdr_call_id: doc.mdr_call_id,
+        voice_call_id: voiceCallId,
+        referred_contact: {
+          name: doc.tool_flags.referred_contact?.name ?? "",
+          phone: doc.tool_flags.referred_contact?.phone ?? "",
+        },
+      };
 
-      referred_contact: doc.tool_flags.wrong_contact
-        ? {
-            name: doc.tool_flags.referred_contact?.name ?? "",
-            phone: doc.tool_flags.referred_contact?.phone ?? "",
-          }
-        : null,
-      callback_requested: doc.tool_flags.callback_requested || null,
-      callback_time: doc.tool_flags.callback_time ?? null,
-      email_requested: doc.tool_flags.email_requested || null,
-      requested_email: doc.tool_flags.requested_email ?? null,
-
-      conversation_complete: (structured.conversation_complete as boolean) ?? (answered ? true : null),
-      information_collected: answered ? structured : null,
-
-      human_escalation_required: doc.tool_flags.human_escalation_required || null,
-      confidence_score: (structured.confidence_score as number) ?? null,
-      summary: (structured.summary as string) ?? null,
-      next_action: (structured.next_action as string) ?? null,
-    },
-    recording_url: doc.recording_url ?? null,
-    transcript: doc.transcript ?? null,
-    started_at: doc.started_at ? doc.started_at.toISOString() : null,
-    ended_at: doc.ended_at ? doc.ended_at.toISOString() : null,
-  };
+    case "CALL_COMPLETED":
+      return {
+        event_type: "CALL_COMPLETED",
+        mdr_call_id: doc.mdr_call_id,
+        voice_call_id: voiceCallId,
+        call_type: doc.call_type,
+        call_status: "COMPLETED",
+        result: buildCommonResult(structured, doc.tool_flags),
+        recording_url: doc.recording_url ?? null,
+        transcript: doc.transcript ?? null,
+      };
+  }
 }

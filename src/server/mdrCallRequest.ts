@@ -39,8 +39,9 @@ mdrCallRequestRouter.post("/call-requests", async (req, res) => {
       call_type: body.call_type,
       contact: body.contact,
       shipment: body.shipment,
-      previous_interactions: body.previous_interactions ?? [],
-      open_items: body.open_items ?? [],
+      questions: body.questions ?? [],
+      previous_summary: body.previous_summary ?? null,
+      open_issue: body.open_issue ?? null,
     });
   } catch (err: unknown) {
     // Duplicate mdr_call_id = MDR retried a request we already accepted.
@@ -48,9 +49,10 @@ mdrCallRequestRouter.post("/call-requests", async (req, res) => {
     if (isDuplicateKeyError(err)) {
       const existing = await CallRequest.findOne({ mdr_call_id: body.mdr_call_id });
       res.status(202).json({
+        success: true,
         mdr_call_id: body.mdr_call_id,
         voice_call_id: existing?.vapi_call_id ?? null,
-        status: "already_accepted",
+        status: "QUEUED",
       });
       return;
     }
@@ -70,10 +72,13 @@ mdrCallRequestRouter.post("/call-requests", async (req, res) => {
     callRequestDoc.lifecycle_status = "CALLING";
     await callRequestDoc.save();
 
+    // Shape confirmed by MDR (integration guide §4) — MDR saves all three
+    // fields, plus `success`.
     res.status(202).json({
+      success: true,
       mdr_call_id: callRequestDoc.mdr_call_id,
       voice_call_id: call.id,
-      status: "accepted",
+      status: "QUEUED",
     });
   } catch (err) {
     console.error(`[mdrCallRequest] failed to place call for ${body.mdr_call_id}`, err);

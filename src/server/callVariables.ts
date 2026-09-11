@@ -15,31 +15,16 @@ export function buildCallVariables(doc: CallRequestDoc): Record<string, string> 
     first_message: FIRST_MESSAGE.replaceAll("{{shipment_id}}", shipmentId),
     call_type: doc.call_type,
     call_type_questions: CALL_TYPE_QUESTIONS[doc.call_type] ?? "",
-    previous_interactions_summary: renderPreviousInteractions(doc),
-    open_items_text: renderOpenItems(doc),
+    mdr_questions_text: renderMdrQuestions(doc),
+    previous_summary_text: doc.previous_summary || "None on file — this is the first contact for this shipment.",
+    open_issue_text: doc.open_issue || "None.",
   };
 }
 
-function renderPreviousInteractions(doc: CallRequestDoc): string {
-  const interactions = doc.previous_interactions as Array<{
-    date?: string;
-    contact_type?: string;
-    summary?: string;
-  }> | undefined;
-
-  if (!interactions || interactions.length === 0) {
-    return "None on file — this is the first contact for this shipment.";
+function renderMdrQuestions(doc: CallRequestDoc): string {
+  const questions = doc.questions as string[] | undefined;
+  if (!questions || questions.length === 0) {
+    return "None beyond the call type's default questions below.";
   }
-
-  return interactions
-    .map((i) => `- (${i.date ?? "unknown date"}, ${i.contact_type ?? "unknown"}) ${i.summary ?? ""}`)
-    .join("\n");
-}
-
-function renderOpenItems(doc: CallRequestDoc): string {
-  const items = doc.open_items as string[] | undefined;
-  if (!items || items.length === 0) {
-    return "None.";
-  }
-  return items.map((item) => `- ${item}`).join("\n");
+  return questions.map((q) => `- ${q}`).join("\n");
 }

@@ -4,27 +4,75 @@ import { FIRST_MESSAGE, SYSTEM_PROMPT, VOICEMAIL_MESSAGE } from "./prompt.js";
 import { RESULT_EXTRACTION_PROMPT, RESULT_SCHEMA } from "./resultSchema.js";
 import { buildTools } from "./tools.js";
 
+// Voice/model/transcriber/call-quality settings below are mirrored from
+// the reference project's live "Everly" assistant (id 765184dd-196b-420f-
+// 85de-959034487070) to match its call-handling behavior — see git history
+// for the settings this replaced. Deliberately NOT mirrored from that
+// assistant: model.messages/tools (our own prompt.ts/tools.ts stay
+// authoritative), analysisPlan (ours, for our own result contract),
+// firstMessage/voicemailMessage/endCallMessage (that assistant's copy is
+// specific to its own quoting domain), name, and server.url (points at
+// our own PUBLIC_BASE_URL, not theirs).
 const assistantConfig = {
   name: "MDR Agent 3 - Everly",
   firstMessage: FIRST_MESSAGE,
   model: {
     provider: "openai",
-    model: "gpt-4o",
+    model: "gpt-4.1",
+    temperature: 0.4,
     messages: [{ role: "system", content: SYSTEM_PROMPT }],
     tools: buildTools(),
   },
   voice: {
-    // Vapi's default 11labs voice, usable without your own ElevenLabs
-    // credentials. Swap for the client's approved voice once chosen.
     provider: "11labs",
-    voiceId: "sarah",
+    voiceId: "gE0owC0H9C8SzfDyIUtB",
+    model: "eleven_v3",
+    stability: 0.3,
+    similarityBoost: 0.8,
+    style: 0.65,
+    speed: 1,
   },
   transcriber: {
     provider: "deepgram",
-    model: "nova-2",
+    model: "nova-3",
+    language: "en",
   },
+  silenceTimeoutSeconds: 60,
+  maxDurationSeconds: 900,
+  firstMessageMode: "assistant-waits-for-user",
+  serverMessages: ["end-of-call-report", "status-update"],
+  artifactPlan: {
+    transcriptPlan: { enabled: true },
+    recordingEnabled: true,
+  },
+  startSpeakingPlan: {
+    waitSeconds: 0.8,
+    smartEndpointingPlan: { provider: "vapi" },
+  },
+  stopSpeakingPlan: {
+    numWords: 2,
+    voiceSeconds: 0.2,
+    backoffSeconds: 1,
+  },
+  hooks: [
+    {
+      on: "customer.speech.timeout",
+      do: [{ type: "say", exact: "Hello? Are you there?" }],
+      options: {
+        timeoutSeconds: 30,
+        triggerMaxCount: 1,
+        triggerResetMode: "onUserSpeech",
+      },
+    },
+  ],
   voicemailDetection: {
-    provider: "twilio",
+    provider: "vapi",
+    backoffPlan: {
+      maxRetries: 5,
+      startAtSeconds: 2,
+      frequencySeconds: 2.5,
+    },
+    beepMaxAwaitSeconds: 20,
   },
   voicemailMessage: VOICEMAIL_MESSAGE,
   analysisPlan: {

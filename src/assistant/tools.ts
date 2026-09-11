@@ -39,11 +39,11 @@ export function buildTools() {
       function: {
         name: "reportCallbackRequested",
         description:
-          "Call this when the person asks to be called back later, with whatever time they mentioned.",
+          "Call this when the person asks to be called back later. Convert whatever they said into a number of minutes from now (e.g. 'in an hour' -> 60, 'in 30 minutes' -> 30, 'this afternoon' -> a reasonable estimate like 180). Omit if no time was given.",
         parameters: {
           type: "object",
           properties: {
-            callback_time: { type: "string" },
+            callback_after_minutes: { type: "number" },
           },
         },
       },
@@ -69,13 +69,13 @@ export function buildTools() {
       function: {
         name: "flagHumanEscalation",
         description:
-          "Call this when a serious issue comes up (breakdown, accident, safety concern, or anything else that needs human operations follow-up rather than just a data update).",
+          "Call this ONLY for one of the defined escalation conditions (see the Escalation section of your instructions): truck breakdown/mechanical failure, accident, driver cannot complete the move, carrier cannot perform the load, an appointment will definitely be missed, a serious safety issue, the contact specifically asks for a human, you cannot confidently understand an important answer, or another serious operational issue outside the normal flow. Always include why.",
         parameters: {
           type: "object",
           properties: {
-            reason: { type: "string" },
+            escalation_reason: { type: "string" },
           },
-          required: ["reason"],
+          required: ["escalation_reason"],
         },
       },
       server,

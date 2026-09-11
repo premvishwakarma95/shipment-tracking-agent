@@ -15,26 +15,27 @@ export const CONTACT_TYPES = [
   "AFTER_HOURS",
 ] as const;
 
-// The vocabulary MDR expects back. Kept flat here rather than split into an
-// internal enum + a translation layer (contrast the reference project's
-// mapToMdrCallLogStatus) because MDR's enum already IS the target
-// vocabulary — there's nothing to translate.
-export const CALL_STATUSES = [
-  "COMPLETED",
+// The event_type vocabulary confirmed in the MDR Agent 3 Voice API
+// Integration Guide (§5, §10, §13). NOTE: EMAIL_REQUESTED is deliberately
+// NOT here — that doc's webhook event list doesn't include it. We still
+// capture an email request internally (tool_flags.email_requested) but
+// fold it into whichever real event's summary we do send, until MDR
+// confirms whether it needs its own event — see docs/requirements-tracker.md.
+export const EVENT_TYPES = [
   "NO_ANSWER",
-  "LEFT_VOICEMAIL",
+  "VOICEMAIL",
   "BUSY",
   "CALL_FAILED",
   "CALL_DROPPED",
-  "WRONG_CONTACT",
   "CALLBACK_REQUESTED",
-  "EMAIL_REQUESTED",
+  "WRONG_CONTACT",
+  "CALL_COMPLETED",
 ] as const;
 
 // Internal-only bookkeeping for where THIS record is in its own lifecycle.
-// Deliberately a separate field from call_status (the MDR-facing outcome)
+// Deliberately a separate field from event_type (the MDR-facing outcome)
 // — do not collapse the two. lifecycle_status answers "have we heard back
-// from Vapi yet?"; call_status answers "what happened on the call?".
+// from Vapi yet?"; event_type answers "what happened on the call?".
 export const LIFECYCLE_STATUSES = [
   "PENDING",
   "CALLING",
@@ -59,10 +60,13 @@ const ToolFlagsSchema = new Schema(
       phone: { type: String, default: null },
     },
     callback_requested: { type: Boolean, default: false },
-    callback_time: { type: String, default: null },
+    // Confirmed contract wants a number of minutes, not free text.
+    callback_after_minutes: { type: Number, default: null },
+    // No confirmed MDR event_type for this yet — kept for visibility only.
     email_requested: { type: Boolean, default: false },
     requested_email: { type: String, default: null },
     human_escalation_required: { type: Boolean, default: false },
+    escalation_reason: { type: String, default: null },
   },
   { _id: false },
 );
@@ -70,8 +74,8 @@ const ToolFlagsSchema = new Schema(
 // Intentionally thin: this model exists only to bridge the async gap
 // between "we told Vapi to dial" and "Vapi's webhooks tell us what
 // happened," a few minutes later. It is NOT a cross-call history store —
-// MDR supplies previous_interactions/open_items on every request instead
-// of Voice API querying its own past attempts (contrast the reference
+// MDR supplies previous_summary/open_issue on every request instead of
+// Voice API querying its own past attempts (contrast the reference
 // project's callMemory.ts, which had to do that lookup itself).
 const CallRequestSchema = new Schema(
   {
@@ -79,11 +83,18 @@ const CallRequestSchema = new Schema(
     call_type: { type: String, enum: CALL_TYPES, required: true },
     contact: { type: ContactSchema, required: true },
     // Permissive on purpose: MDR may send additional TAI shipment/reference
-    // fields (references, timing, alerts, documents) beyond the example in
-    // the spec. Don't lock this down to a strict sub-schema.
+    // fields beyond the confirmed example. Don't lock this down to a strict
+    // sub-schema.
     shipment: { type: Schema.Types.Mixed, required: true },
-    previous_interactions: { type: [Schema.Types.Mixed], default: [] },
-    open_items: { type: [String], default: [] },
+    // Singular strings per the confirmed integration guide (§9) — NOT the
+    // previous_interactions[]/open_items[] arrays from the earlier informal
+    // spec. Renamed here to match.
+    previous_summary: { type: String, default: null },
+    open_issue: { type: String, default: null },
+    // New in the confirmed contract (§3): MDR now tells us explicitly which
+    // questions it wants answered on this call, in addition to the default
+    // per-call-type set in prompt.ts.
+    questions: { type: [String], default: [] },
 
     vapi_call_id: { type: String, index: true, sparse: true },
     lifecycle_status: {
@@ -97,10 +108,10 @@ const CallRequestSchema = new Schema(
 
     // Raw output of Vapi's post-call structured-data extraction
     // (see src/assistant/resultSchema.ts), kept unparsed alongside the
-    // assembled result actually sent to MDR.
+    // assembled event actually sent to MDR.
     structured_result: { type: Schema.Types.Mixed, default: null },
 
-    call_status: { type: String, enum: CALL_STATUSES, default: null },
+    event_type: { type: String, enum: EVENT_TYPES, default: null },
     recording_url: { type: String, default: null },
     transcript: { type: String, default: null },
     started_at: { type: Date, default: null },
