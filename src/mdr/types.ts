@@ -65,8 +65,11 @@ export interface CommonCallResult {
   appointment_status: "CONFIRMED" | "NOT_CONFIRMED" | "COMPLETED" | "MISSED" | "UNKNOWN" | null;
   human_escalation_required: boolean;
   escalation_reason: string | null;
-  confidence_score: number | null;
-  summary: string | null;
+  // NOT nullable, unlike every field above — these are the AI's own
+  // assessment of the call (see resultSchema.ts), always populated even
+  // when every data field came back null.
+  confidence_score: number;
+  summary: string;
   next_action: string | null;
 }
 
@@ -98,7 +101,11 @@ export type VoiceWebhookEvent =
     })
   | (WebhookEventBase & {
       event_type: "WRONG_CONTACT";
-      referred_contact: { name: string; phone: string };
+      // Nullable, not "": if the LLM called the tool without actually
+      // capturing a name/phone (e.g. it responded before the caller
+      // finished speaking), that's "we don't know," not "we asked and got
+      // an empty answer" — never paper over it with an empty string.
+      referred_contact: { name: string | null; phone: string | null };
     })
   | (WebhookEventBase & {
       event_type: "CALL_COMPLETED";

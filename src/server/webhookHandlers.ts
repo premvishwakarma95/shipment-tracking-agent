@@ -95,7 +95,11 @@ export async function handleEndOfCallReport(message: {
   }
 
   const structured = message.analysis?.structuredData ?? {};
-  const eventType = classifyEventType(message.endedReason, doc.tool_flags);
+  const eventType = classifyEventType(
+    message.endedReason,
+    doc.tool_flags,
+    structured.call_ended_abruptly as boolean | undefined,
+  );
 
   doc.structured_result = structured;
   doc.event_type = eventType;
@@ -157,10 +161,31 @@ function buildCommonResult(
     escalation_reason:
       (toolFlags?.escalation_reason as string) ?? (structured.escalation_reason as string) ?? null,
 
-    confidence_score: (structured.confidence_score as number) ?? null,
-    summary: (structured.summary as string) ?? null,
+    // Defensive fallback only — resultSchema.ts's `required` list and
+    // extraction prompt should already force these two to always be
+    // present. If they're still missing, that's the extraction pass
+    // misbehaving, not a real "unconfirmed" case, so warn loudly rather
+    // than silently sending MDR a fabricated-looking default.
+    confidence_score: valueOrWarnDefault(
+      structured.confidence_score as number | undefined,
+      0,
+      "confidence_score",
+    ),
+    summary: valueOrWarnDefault(
+      structured.summary as string | undefined,
+      "No summary available.",
+      "summary",
+    ),
     next_action: (structured.next_action as string) ?? null,
   };
+}
+
+function valueOrWarnDefault<T>(value: T | undefined | null, fallback: T, field: string): T {
+  if (value === undefined || value === null) {
+    console.warn(`[webhookHandlers] structured extraction omitted required field "${field}" — using fallback`);
+    return fallback;
+  }
+  return value;
 }
 
 function buildWebhookEvent(
@@ -203,8 +228,8 @@ function buildWebhookEvent(
         mdr_call_id: doc.mdr_call_id,
         voice_call_id: voiceCallId,
         referred_contact: {
-          name: doc.tool_flags.referred_contact?.name ?? "",
-          phone: doc.tool_flags.referred_contact?.phone ?? "",
+          name: doc.tool_flags.referred_contact?.name ?? null,
+          phone: doc.tool_flags.referred_contact?.phone ?? null,
         },
       };
 

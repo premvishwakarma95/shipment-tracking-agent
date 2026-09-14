@@ -23,7 +23,7 @@ export function buildTools() {
       function: {
         name: "reportWrongContact",
         description:
-          "Call this when the person on the line is not the right contact for this shipment and has given you a different person's name and/or phone number to reach instead. Do not call the new number yourself.",
+          "Call this ONLY AFTER the person has actually finished telling you the referred person's name (and phone number, if given) — do not call it the moment they say something like 'talk to...' or 'you should call...'. If they trail off, pause, or you're not sure you caught the name, ask them to repeat it first, then call this tool with what they actually said. Do not call the new number yourself.",
         parameters: {
           type: "object",
           properties: {
@@ -39,7 +39,7 @@ export function buildTools() {
       function: {
         name: "reportCallbackRequested",
         description:
-          "Call this when the person asks to be called back later. Convert whatever they said into a number of minutes from now (e.g. 'in an hour' -> 60, 'in 30 minutes' -> 30, 'this afternoon' -> a reasonable estimate like 180). Omit if no time was given.",
+          "Call this when the person asks to be called back later. Convert whatever they said into a number of minutes from now (e.g. 'in an hour' -> 60, 'in 30 minutes' -> 30, 'this afternoon' -> a reasonable estimate like 180). Omit if no time was given. If you misheard the time and the person corrects you (e.g. you confirmed '1 day' but they say 'no, 1 hour'), call this tool AGAIN with the corrected number — the latest call is what's used, so always re-call after a correction rather than leaving the wrong value as final.",
         parameters: {
           type: "object",
           properties: {

@@ -16,6 +16,13 @@ const ENDED_REASON_MAP: Record<string, EventType> = {
   "pipeline-error": "CALL_FAILED",
   "voicemail": "VOICEMAIL",
   "customer-busy": "BUSY",
+  // Confirmed empirically 2026-09-14 (TEST-009): Vapi's real endedReason
+  // for an unanswered call is "customer-did-not-answer", not "no-answer" —
+  // without this the console warned "unrecognized endedReason" and every
+  // real no-answer call was silently reported to MDR as CALL_FAILED
+  // instead of NO_ANSWER. Kept "no-answer" too in case an older/different
+  // Vapi path still sends it — cheap to keep both mapped correctly.
+  "customer-did-not-answer": "NO_ANSWER",
   "no-answer": "NO_ANSWER",
 };
 
@@ -30,9 +37,21 @@ const ENDED_REASON_MAP: Record<string, EventType> = {
 // NOTE: email_requested is deliberately NOT checked here — the confirmed
 // MDR Agent 3 Voice API Integration Guide's webhook event list has no
 // EMAIL_REQUESTED event. See docs/requirements-tracker.md.
+//
+// `callEndedAbruptly` (from the post-call structured extraction, see
+// resultSchema.ts's `call_ended_abruptly`) is the tiebreaker for
+// "customer-ended-call" specifically. Confirmed empirically 2026-09-14
+// (TEST-014, a deliberate mid-question hangup): Vapi's endedReason for
+// customer-initiated hangups is the SAME string ("customer-ended-call")
+// whether the caller finished normally or the call just dropped
+// mid-sentence — the telephony layer can't tell those apart, so
+// ENDED_REASON_MAP alone silently classified a dropped call as
+// CALL_COMPLETED. Only the conversation content can distinguish them, so
+// that's the one case that needs the extraction's judgment call.
 export function classifyEventType(
   endedReason: string | undefined,
   toolFlags: ToolFlags | undefined,
+  callEndedAbruptly?: boolean,
 ): EventType {
   if (toolFlags?.wrong_contact) return "WRONG_CONTACT";
   if (toolFlags?.callback_requested) return "CALLBACK_REQUESTED";
@@ -46,6 +65,10 @@ export function classifyEventType(
   if (!mapped) {
     console.warn(`[callOutcome] unrecognized endedReason "${endedReason}", defaulting to CALL_FAILED`);
     return "CALL_FAILED";
+  }
+
+  if (endedReason === "customer-ended-call" && callEndedAbruptly) {
+    return "CALL_DROPPED";
   }
 
   return mapped;
