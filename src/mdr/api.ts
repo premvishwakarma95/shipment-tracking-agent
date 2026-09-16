@@ -1,10 +1,11 @@
 import { mdrClient, MdrApiError } from "./client.js";
 import type { VoiceWebhookEvent } from "./types.js";
 
-// Confirmed by MDR (integration guide §5, §13) — no longer a placeholder.
-// Update src/mdr/client.ts's MDR_API_BASE_URL to
-// "https://api.mydrayrate.com" once that's set in .env for this to work.
-const VOICE_WEBHOOK_ENDPOINT = "/api/v1/agent3/voice/webhook";
+// Real endpoint confirmed directly by the MDR team (2026-09-16) — supersedes
+// the integration guide's originally-described path/host. Requires
+// MDR_API_BASE_URL="https://staging.mydrayrate.com" and MDR_API_AUTH_TOKEN
+// set in .env (Bearer token, confirmed — see docs/requirements-tracker.md).
+const VOICE_WEBHOOK_ENDPOINT = "/api/voice/check-call-completed";
 
 // Deliberately no retry loop here: on failure we log and return false, and
 // the caller (src/server/webhookHandlers.ts) leaves CallRequest.mdr_pushed_at

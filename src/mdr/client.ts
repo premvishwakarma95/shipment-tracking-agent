@@ -22,8 +22,8 @@ async function request<T>(
   path: string,
   init: { method: string; body?: unknown },
 ): Promise<T> {
-  // Base URL confirmed by MDR: https://api.mydrayrate.com (integration
-  // guide §5, §13) — set MDR_API_BASE_URL to that in .env.
+  // Base URL confirmed directly by the MDR team (2026-09-16):
+  // https://staging.mydrayrate.com — set MDR_API_BASE_URL to that in .env.
   const baseUrl = process.env.MDR_API_BASE_URL;
   if (!baseUrl) {
     throw new Error("Missing required environment variable: MDR_API_BASE_URL");
@@ -33,10 +33,9 @@ async function request<T>(
   const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
   try {
-    // UNCONFIRMED: the integration guide doesn't document any auth scheme
-    // for this webhook. Send a Bearer token only if one is configured, so
-    // we're not guessing a header MDR doesn't expect — see
-    // docs/requirements-tracker.md.
+    // Auth scheme confirmed by MDR (2026-09-16): Bearer token. Still sent
+    // conditionally rather than unconditionally required, so this client
+    // doesn't hard-fail if the token is ever rotated out of .env.
     const authToken = process.env.MDR_API_AUTH_TOKEN;
     const res = await fetch(`${baseUrl}${path}`, {
       method: init.method,

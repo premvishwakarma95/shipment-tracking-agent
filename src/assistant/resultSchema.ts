@@ -6,7 +6,7 @@
 // Fields irrelevant to a given call type simply extract as null. Must be
 // kept in sync with CommonCallResult in src/mdr/types.ts.
 //
-// Every field is nullable EXCEPT confidence_score/summary (see below), and
+// Every field is nullable EXCEPT confidence_score/call_summary (see below), and
 // the extraction prompt is explicit about never inferring a value — this is
 // the single place responsible for the "true = confirmed yes, false =
 // confirmed no, null = unknown/not asked/not applicable" rule (§7A), since
@@ -26,7 +26,7 @@
 // "shipment_problems_safe") loosely copied from the conversation's
 // wording instead of our schema's actual property names, while our real
 // fields (issue_type, appointment_status, driver_confirmed, ...) were
-// dropped. Only confidence_score/summary — the two fields that WERE
+// dropped. Only confidence_score/call_summary — the two fields that WERE
 // required — came through reliably. Keep every property required going
 // forward, even ones added later.
 
@@ -35,18 +35,18 @@ Extract only what the caller explicitly stated during this call. Use null
 for anything not clearly confirmed — never infer, guess, or carry forward a
 value from context that the caller did not actually say on this call.
 
-IMPORTANT EXCEPTION — confidence_score and summary are NOT caller-stated
-facts, they are YOUR OWN assessment of this call, so the null rule above
-does NOT apply to them. Always fill both in, even when every other field
-came back null (e.g. a very short or unclear call):
+IMPORTANT EXCEPTION — confidence_score and call_summary are NOT
+caller-stated facts, they are YOUR OWN assessment of this call, so the null
+rule above does NOT apply to them. Always fill both in, even when every
+other field came back null (e.g. a very short or unclear call):
 - confidence_score: a number from 0.00 to 1.00 reflecting how confident YOU
   are that you correctly understood and extracted this call's information
   (based on speech clarity and how directly questions were answered) — NOT
   a shipment-risk or carrier rating. 0.90-1.00 = very clear, 0.70-0.89 =
   reasonably clear, below 0.70 = unclear/uncertain. Never leave this null.
-- summary: 1-2 plain-language sentences describing what happened on this
-  call, even if most data fields are null (e.g. "Driver could not confirm
-  an ETA."). Never leave this null.
+- call_summary: 1-2 plain-language sentences describing what happened on
+  this call, even if most data fields are null (e.g. "Driver could not
+  confirm an ETA."). Never leave this null.
 - call_ended_abruptly: true if the call was cut off or disconnected before
   reaching a natural conclusion — e.g. you were still asking a question and
   got no final reply, or the conversation just stops mid-exchange with no
@@ -70,6 +70,15 @@ these specific conditions, per MDR's confirmed escalation rule —
 If none of these apply, human_escalation_required must be false and
 escalation_reason must be null. If true, escalation_reason must briefly
 state which condition applied and why.
+
+For open_issue: a brief plain-language description of anything raised on
+this call that is still UNRESOLVED and should be flagged for follow-up on
+the NEXT call to this shipment/contact — e.g. "Container leakage reported,
+not yet communicated to dispatch." or "Driver unsure whether appointment
+was rescheduled, needs confirmation next call." Use null if the call ended
+with nothing outstanding to follow up on. This is different from
+delay_reason/issue_type, which describe the cause of a delay on THIS call —
+open_issue is specifically about what still needs attention going forward.
 `.trim();
 
 export const RESULT_SCHEMA = {
@@ -105,8 +114,12 @@ export const RESULT_SCHEMA = {
     // -> null" doesn't apply. required[] below forces the model to always
     // include them.
     confidence_score: { type: "number" },
-    summary: { type: "string" },
+    call_summary: { type: "string" },
     next_action: { type: "string", nullable: true },
+
+    // Requested by MDR 2026-09-16 — carried forward and echoed back as
+    // CallRequestPayload.open_issue on their next call request.
+    open_issue: { type: "string", nullable: true },
 
     // Internal-only signal, NOT part of MDR's confirmed result contract
     // (mdr/types.ts's CommonCallResult) — never forwarded to MDR. Exists
@@ -135,8 +148,9 @@ export const RESULT_SCHEMA = {
     "human_escalation_required",
     "escalation_reason",
     "confidence_score",
-    "summary",
+    "call_summary",
     "next_action",
+    "open_issue",
     "call_ended_abruptly",
   ],
 } as const;

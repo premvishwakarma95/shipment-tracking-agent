@@ -69,8 +69,20 @@ export interface CommonCallResult {
   // assessment of the call (see resultSchema.ts), always populated even
   // when every data field came back null.
   confidence_score: number;
-  summary: string;
+  // Named call_summary (not summary) at MDR's explicit request 2026-09-16,
+  // so they can copy this value directly into CallRequestPayload's
+  // previous_summary field on their NEXT call request for this
+  // shipment/contact, without remapping field names on their side.
+  call_summary: string;
   next_action: string | null;
+  // Requested by MDR 2026-09-16, so this call's unresolved issue can be
+  // pushed forward and echoed back as CallRequestPayload.open_issue on
+  // MDR's NEXT call request for this shipment (mirrors that inbound
+  // field's name deliberately, to make the round-trip obvious). Null if
+  // this call raised no outstanding issue needing follow-up — distinct
+  // from delay_reason/issue_type, which describe the cause of a delay
+  // rather than what still needs following up.
+  open_issue: string | null;
 }
 
 interface WebhookEventBase {
@@ -92,12 +104,12 @@ export type VoiceWebhookEvent =
   | (WebhookEventBase & {
       event_type: "CALL_DROPPED";
       partial_result: Partial<CommonCallResult>;
-      summary: string | null;
+      call_summary: string | null;
     })
   | (WebhookEventBase & {
       event_type: "CALLBACK_REQUESTED";
       callback_after_minutes: number | null;
-      summary: string | null;
+      call_summary: string | null;
     })
   | (WebhookEventBase & {
       event_type: "WRONG_CONTACT";

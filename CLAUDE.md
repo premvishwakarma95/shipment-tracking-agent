@@ -51,14 +51,12 @@ See `docs/call-flow.md` for the diagram.
 ## Env vars
 
 See `.env.example` — every non-obvious one has a comment explaining why it
-exists. `MDR_API_BASE_URL`/`MDR_API_AUTH_TOKEN` are deliberately still
-pointed at a placeholder even though the real base URL and webhook path are
-now confirmed (`https://api.mydrayrate.com` + `/api/v1/agent3/voice/webhook`,
-hardcoded as a constant in `src/mdr/api.ts`) — don't flip them to the real
-value without checking with the user first; test-case coverage is still in
-progress and pushing test events to MDR's real system would be wrong. Auth
-scheme for that webhook is still unconfirmed — `src/mdr/client.ts` sends no
-auth header at all unless `MDR_API_AUTH_TOKEN` is set.
+exists. `MDR_API_BASE_URL`/`MDR_API_AUTH_TOKEN` are now live, confirmed
+directly by the MDR team 2026-09-16 (`https://staging.mydrayrate.com` +
+`/api/voice/check-call-completed`, endpoint path hardcoded as a constant in
+`src/mdr/api.ts`; Bearer token auth). Both local `.env` and the staging
+server's `.env` have the real values — this is no longer a placeholder, and
+`CALL_COMPLETED`/etc. events now actually reach MDR's real system.
 
 ## Data model
 

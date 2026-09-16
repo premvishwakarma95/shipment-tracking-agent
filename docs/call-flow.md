@@ -35,8 +35,8 @@ takes a different payload per `event_type` — see `src/mdr/types.ts`'s
 | event_type | Payload beyond `{event_type, mdr_call_id, voice_call_id}` |
 |---|---|
 | `NO_ANSWER` / `VOICEMAIL` / `BUSY` / `CALL_FAILED` | none — minimal shape |
-| `CALL_DROPPED` | `partial_result` (whatever of the common result was captured), `summary` |
-| `CALLBACK_REQUESTED` | `callback_after_minutes` (number), `summary` |
+| `CALL_DROPPED` | `partial_result` (whatever of the common result was captured), `call_summary` |
+| `CALLBACK_REQUESTED` | `callback_after_minutes` (number), `call_summary` |
 | `WRONG_CONTACT` | `referred_contact: {name, phone}` |
 | `CALL_COMPLETED` | `call_type`, `call_status: "COMPLETED"`, full `result` object, `recording_url`, `transcript` |
 

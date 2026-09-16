@@ -28,7 +28,7 @@ Required before the server can do anything useful:
 - `VAPI_API_KEY`, `VAPI_ASSISTANT_ID`, `VAPI_PHONE_NUMBER_ID` — from your Vapi account.
 - `PUBLIC_BASE_URL` — a publicly reachable URL for this service (e.g. an `ngrok` tunnel in dev). Vapi cannot reach `localhost` to deliver webhooks.
 - `MDR_WEBHOOK_SHARED_SECRET` — the `x-api-key` value MDR (or your test requests) must send.
-- `MDR_API_BASE_URL` / `MDR_API_AUTH_TOKEN` — **placeholder** until MDR shares real integration details (see `docs/requirements-tracker.md`).
+- `MDR_API_BASE_URL` / `MDR_API_AUTH_TOKEN` — real values, confirmed directly by MDR 2026-09-16 (Bearer token auth). Get the token from whoever holds MDR credentials — never commit a real one to `.env.example`.
 
 ## Scripts
 

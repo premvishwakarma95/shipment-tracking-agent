@@ -171,12 +171,13 @@ function buildCommonResult(
       0,
       "confidence_score",
     ),
-    summary: valueOrWarnDefault(
-      structured.summary as string | undefined,
+    call_summary: valueOrWarnDefault(
+      structured.call_summary as string | undefined,
       "No summary available.",
-      "summary",
+      "call_summary",
     ),
     next_action: (structured.next_action as string) ?? null,
+    open_issue: (structured.open_issue as string) ?? null,
   };
 }
 
@@ -209,7 +210,7 @@ function buildWebhookEvent(
         mdr_call_id: doc.mdr_call_id,
         voice_call_id: voiceCallId,
         partial_result: result,
-        summary: result.summary,
+        call_summary: result.call_summary,
       };
     }
 
@@ -219,7 +220,7 @@ function buildWebhookEvent(
         mdr_call_id: doc.mdr_call_id,
         voice_call_id: voiceCallId,
         callback_after_minutes: doc.tool_flags.callback_after_minutes ?? null,
-        summary: (structured.summary as string) ?? null,
+        call_summary: (structured.call_summary as string) ?? null,
       };
 
     case "WRONG_CONTACT":
