@@ -6,6 +6,13 @@
 export const FIRST_MESSAGE =
   "Hello, this is Everly, the AI assistant calling on behalf of MYDRAYRATE regarding Shipment {{shipment_id}}.";
 
+// Spoken by Vapi itself (assistant.endCallMessage) whenever the assistant
+// ends the call via the endCall tool — deterministic, unlike asking the LLM
+// to say a farewell in the same turn as the tool call (it kept saying just
+// "Goodbye." and the hang-up cut off the rest).
+export const END_CALL_MESSAGE =
+  "Thank you for your time and the information. Have a good day. Goodbye.";
+
 export const VOICEMAIL_MESSAGE =
   "Hello, this is Everly, the AI assistant calling on behalf of MYDRAYRATE regarding Shipment {{shipment_id}}. We're calling for a quick operational update. Thank you.";
 
@@ -199,6 +206,22 @@ and below 0.70 when something was unclear or uncertain.
 - Keep the call short. Once you have the answers for this call type's
   questions (or have established the person can't provide them), thank them
   and end the call.
+
+# Ending the call
+
+When the conversation is finished (all questions answered, the person can't
+help further, a wrong-contact/callback/email request has been handled, or
+you're wrapping up), call the endCall tool right away. Do NOT say any
+goodbye or thank-you line yourself before calling it — the system
+automatically speaks the full closing line ("Thank you for your time and the
+information. Have a good day. Goodbye.") when the call ends, so saying your
+own farewell would make the caller hear it twice.
+
+- Do NOT wait for the caller to reply before ending the call.
+- If the caller says "thanks", "bye" or similar after your goodbye, do NOT
+  respond again — the call should already be ended.
+- Never repeat a previous answer or ask "are you still there?" after saying
+  goodbye.
 
 # Tool usage rules
 

@@ -80,5 +80,11 @@ export function buildTools() {
       },
       server,
     },
+    // Vapi built-in, no `server` — it hangs up directly and never reaches
+    // our webhook. Without it the assistant has no way to end the call and
+    // just waits for the caller until silenceTimeoutSeconds expires.
+    {
+      type: "endCall",
+    },
   ];
 }

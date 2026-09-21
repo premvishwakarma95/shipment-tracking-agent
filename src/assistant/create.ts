@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { vapiClient } from "../vapi/client.js";
-import { FIRST_MESSAGE, SYSTEM_PROMPT, VOICEMAIL_MESSAGE } from "./prompt.js";
+import { END_CALL_MESSAGE, FIRST_MESSAGE, SYSTEM_PROMPT, VOICEMAIL_MESSAGE } from "./prompt.js";
 import { RESULT_EXTRACTION_PROMPT, RESULT_SCHEMA } from "./resultSchema.js";
 import { buildTools } from "./tools.js";
 
@@ -75,6 +75,7 @@ const assistantConfig = {
     beepMaxAwaitSeconds: 20,
   },
   voicemailMessage: VOICEMAIL_MESSAGE,
+  endCallMessage: END_CALL_MESSAGE,
   analysisPlan: {
     structuredDataPlan: {
       enabled: true,
