@@ -80,6 +80,39 @@ This shipment is in transit. Confirm:
   or something else — this becomes the single issue_type value, so get
   enough detail to categorize it as one of those, not several at once.
 `.trim(),
+
+  // Added 2026-09-24 — structurally different from the four above: this
+  // is a contact-information call, not a shipment-status one. Its result
+  // goes through a completely separate extraction schema/shape
+  // (src/assistant/contactUpdateResultSchema.ts), not CommonCallResult.
+  CONTACT_UPDATE_REQUEST: `
+The carrier's current driver and dispatcher contact details are missing or
+outdated and need to be collected. Ask FOR:
+- The current driver's name, phone number, and email address.
+- The current dispatcher's name, phone number, and email address.
+- Whether these are the best contacts for future shipment updates.
+
+If any piece (name, phone, or email) isn't known or isn't given, accept
+that and move on — do not press for it or guess. A partial contact (e.g.
+name and phone but no email) is still useful; don't null out the whole
+person just because one field is missing.
+
+Email addresses and phone numbers are especially easy to mishear over a
+phone call. Whenever someone gives you either one, read it back to confirm
+it (for email, also ask them to spell it out letter by letter) — e.g.
+"Can you spell that out for me?" or "Let me read that back:
+j-o-h-n at example dot com — is that right?" or "Let me confirm that
+number: 555-123-4567 — is that correct?"
+
+If what you heard back on that confirmation attempt is STILL unclear,
+garbled, or doesn't sound like a real email/phone number, don't just move
+on — say so and ask them to repeat or spell it out ONE more time (e.g.
+"Sorry, I still didn't catch that clearly — could you say it once more?").
+Only after that second attempt is also unclear should you give up and
+treat it as unconfirmed rather than guessing or recording a garbled value.
+Two genuine attempts, not one — but don't loop on it endlessly beyond
+that; move on and let the field come back null.
+`.trim(),
 };
 
 export const SYSTEM_PROMPT = `

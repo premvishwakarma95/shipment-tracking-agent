@@ -3,7 +3,7 @@ import { classifyEventType } from "./callOutcome.js";
 import { sendVoiceWebhookEvent } from "../mdr/api.js";
 import { sayAndEndCall } from "../vapi/callControl.js";
 import { WRONG_NUMBER_MESSAGE } from "../assistant/prompt.js";
-import type { CommonCallResult, VoiceWebhookEvent } from "../mdr/types.js";
+import type { CommonCallResult, ContactInfo, ContactUpdateResult, VoiceWebhookEvent } from "../mdr/types.js";
 
 // Vapi's inbound webhook message shapes are permissive/`any`-typed here —
 // this is an external contract we don't control the exact fields of, and
@@ -193,6 +193,66 @@ function buildCommonResult(
   };
 }
 
+// Builds ContactUpdateResult — the separate result shape used ONLY for
+// CONTACT_UPDATE_REQUEST calls (see mdr/types.ts, contactUpdateResultSchema.ts).
+// Deliberately NOT a case in buildCommonResult — this call type's structured
+// extraction is a different schema entirely, not a superset/subset of
+// CommonCallResult's fields.
+function buildContactUpdateResult(
+  structured: Record<string, unknown>,
+  toolFlags: CallRequestDoc["tool_flags"],
+): ContactUpdateResult {
+  return {
+    driver: toContactInfo(structured.driver),
+    dispatcher: toContactInfo(structured.dispatcher),
+    contacts_confirmed: (structured.contacts_confirmed as boolean) ?? null,
+
+    confidence_score: valueOrWarnDefault(
+      structured.confidence_score as number | undefined,
+      0,
+      "confidence_score",
+    ),
+    call_summary: valueOrWarnDefault(
+      structured.call_summary as string | undefined,
+      "No summary available.",
+      "call_summary",
+    ),
+
+    // Same pattern as buildCommonResult — flagHumanEscalation is a generic
+    // tool, available (and equally meaningful) on every call type.
+    human_escalation_required:
+      Boolean(toolFlags?.human_escalation_required) ||
+      Boolean(structured.human_escalation_required),
+    escalation_reason:
+      (toolFlags?.escalation_reason as string) ?? (structured.escalation_reason as string) ?? null,
+    next_action: (structured.next_action as string) ?? null,
+    open_issue: (structured.open_issue as string) ?? null,
+  };
+}
+
+// Deliberately simple/permissive (RFC 5322 has far more valid shapes than
+// this) — the point isn't strict validation, it's a deterministic backstop
+// against the LLM extraction confidently returning obvious garbage (e.g.
+// "pests at error", confirmed empirically 2026-09-24, TEST-CONTACT-
+// UPDATE-003 — that specific case was already correctly left null by the
+// extraction, but this exists so a similarly garbled value NEVER reaches
+// MDR even if the extraction's judgment is wrong some other time).
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function toContactInfo(value: unknown): ContactInfo | null {
+  if (!value || typeof value !== "object") return null;
+  const v = value as Record<string, unknown>;
+  const email = (v.email as string) ?? null;
+  if (email && !EMAIL_PATTERN.test(email)) {
+    console.warn(`[webhookHandlers] extraction returned malformed email "${email}" — dropping to null`);
+  }
+  return {
+    name: (v.name as string) ?? null,
+    phone: (v.phone as string) ?? null,
+    email: email && EMAIL_PATTERN.test(email) ? email : null,
+  };
+}
+
 function valueOrWarnDefault<T>(value: T | undefined | null, fallback: T, field: string): T {
   if (value === undefined || value === null) {
     console.warn(`[webhookHandlers] structured extraction omitted required field "${field}" — using fallback`);
@@ -216,7 +276,10 @@ function buildWebhookEvent(
       return { event_type: eventType, mdr_call_id: doc.mdr_call_id, voice_call_id: voiceCallId };
 
     case "CALL_DROPPED": {
-      const result = buildCommonResult(structured, doc.tool_flags);
+      const result =
+        doc.call_type === "CONTACT_UPDATE_REQUEST"
+          ? buildContactUpdateResult(structured, doc.tool_flags)
+          : buildCommonResult(structured, doc.tool_flags);
       return {
         event_type: "CALL_DROPPED",
         mdr_call_id: doc.mdr_call_id,
@@ -247,6 +310,18 @@ function buildWebhookEvent(
       };
 
     case "CALL_COMPLETED":
+      if (doc.call_type === "CONTACT_UPDATE_REQUEST") {
+        return {
+          event_type: "CALL_COMPLETED",
+          mdr_call_id: doc.mdr_call_id,
+          voice_call_id: voiceCallId,
+          call_type: "CONTACT_UPDATE_REQUEST",
+          call_status: "COMPLETED",
+          result: buildContactUpdateResult(structured, doc.tool_flags),
+          recording_url: doc.recording_url ?? null,
+          transcript: doc.transcript ?? null,
+        };
+      }
       return {
         event_type: "CALL_COMPLETED",
         mdr_call_id: doc.mdr_call_id,

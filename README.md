@@ -46,6 +46,13 @@ Required before the server can do anything useful:
 2. This service places the call via Vapi and responds `202` immediately.
 3. Once the call ends, Vapi's webhooks land on `POST /vapi/tool-calls`; the result is assembled and pushed back to MDR.
 
+Five call types: `OUT_FOR_DELIVERY`, `PICKUP_TODAY`, `DISPATCHED`,
+`IN_TRANSIT` share one common result shape (`CommonCallResult`).
+`CONTACT_UPDATE_REQUEST` (collects driver/dispatcher contact info instead
+of a shipment status) is the one deliberate exception — its own result
+shape and its own Vapi structured-data extraction, applied per-call. See
+CLAUDE.md's "Contact update requests" section before touching either.
+
 See [docs/call-flow.md](./docs/call-flow.md) for the full diagram and
 [docs/test-cases.md](./docs/test-cases.md) for manual QA scenarios.
 

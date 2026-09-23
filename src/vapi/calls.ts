@@ -10,6 +10,13 @@ export interface CreateCallParams {
   // First message override, so the greeting can vary per contact type /
   // call type without needing a second assistant. See prompt.ts.
   firstMessage?: string;
+  // Per-call structured-data extraction override — lets one call_type
+  // (currently only CONTACT_UPDATE_REQUEST) use a different result shape
+  // than the shared assistant's default analysisPlan, without needing a
+  // second Vapi assistant. Confirmed supported by Vapi's assistantOverrides
+  // 2026-09-24. See src/assistant/contactUpdateResultSchema.ts and
+  // mdrCallRequest.ts.
+  analysisPlan?: Record<string, unknown>;
 }
 
 export interface VapiCall {
@@ -41,6 +48,7 @@ export async function createOutboundCall(params: CreateCallParams): Promise<Vapi
     assistantOverrides: {
       variableValues: params.variableValues,
       ...(params.firstMessage ? { firstMessage: params.firstMessage } : {}),
+      ...(params.analysisPlan ? { analysisPlan: params.analysisPlan } : {}),
     },
   });
 }

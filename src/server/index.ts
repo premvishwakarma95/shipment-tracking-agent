@@ -6,7 +6,15 @@ import { recordingsRouter } from "./recordings.js";
 import { handleEndOfCallReport, handleToolCalls } from "./webhookHandlers.js";
 
 const app = express();
-app.use(express.json());
+// Express's default 100kb limit silently rejected Vapi's end-of-call-report
+// webhook for any call with a long enough transcript/structured-data
+// payload — the request never reached our route handler at all, so nothing
+// was saved and the CallRequest stayed stuck at lifecycle_status: "CALLING"
+// forever. Confirmed empirically 2026-09-24 (TEST-CONTACT-UPDATE-002: a
+// ~108KB payload, rejected with PayloadTooLargeError). Not specific to any
+// one call type — raised generously since a full transcript + structured
+// data + Vapi's other call metadata can legitimately exceed 100KB.
+app.use(express.json({ limit: "10mb" }));
 
 app.use("/mdr", mdrCallRequestRouter);
 app.use("/recordings", recordingsRouter);

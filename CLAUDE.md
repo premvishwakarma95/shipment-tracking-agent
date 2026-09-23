@@ -111,6 +111,52 @@ The exact trigger list is confirmed by MDR (see `docs/business-requirements.md`)
 and duplicated in both `prompt.ts` and `resultSchema.ts`'s extraction
 prompt — keep those two lists in sync if MDR ever revises it.
 
+## Contact update requests
+
+`CONTACT_UPDATE_REQUEST` (added 2026-09-24) is structurally different from
+the other four call types — it collects driver/dispatcher contact info,
+not a shipment status update — and does NOT share `CommonCallResult`.
+This was an explicit, deliberate exception to MDR's own "one common
+CALL_COMPLETED response structure" rule (§7A), confirmed directly by the
+user 2026-09-24, not a default to reach for casually — don't fold a future
+call type into `ContactUpdateResult` or vice versa without the same kind
+of explicit confirmation.
+
+- Result shape: `ContactUpdateResult` (`src/mdr/types.ts`) — nested
+  `driver`/`dispatcher: {name, phone, email} | null`, plus
+  `contacts_confirmed`. `VoiceWebhookEvent`'s `CALL_COMPLETED` variant is
+  split in two, discriminated by `call_type`, so `CONTACT_UPDATE_REQUEST`
+  can never accidentally carry a `CommonCallResult` or vice versa.
+- Extraction: its own Vapi structured-data schema/prompt
+  (`src/assistant/contactUpdateResultSchema.ts`), NOT `resultSchema.ts`'s
+  `RESULT_SCHEMA`. Applied per-call, not assistant-wide — passed via
+  `assistantOverrides.analysisPlan` on call creation
+  (`src/vapi/calls.ts`/`mdrCallRequest.ts`) when `call_type ===
+  "CONTACT_UPDATE_REQUEST"`. Every other call type is untouched, still
+  uses the shared assistant's default `analysisPlan`. Confirmed via
+  Vapi's own generated API client that `assistantOverrides.analysisPlan`
+  is a real, supported override (2026-09-24) — don't assume other
+  assistant-level fields are overridable the same way without checking.
+- `contact.type: "CARRIER_REPRESENTATIVE"` (new `CONTACT_TYPES` value) —
+  MDR's own example payload sent `"CARRIER REPRESENTATIVE"` with a space,
+  which doesn't match this enum's `SCREAMING_SNAKE_CASE` convention and
+  will fail validation. MDR needs to send the underscore version; flag
+  this if a real request comes in with the space variant and gets
+  rejected.
+- Capturing an email address over voice is failure-prone. The prompt
+  (`CALL_TYPE_QUESTIONS.CONTACT_UPDATE_REQUEST`) instructs the agent to
+  have the caller spell it out or confirm a read-back before treating it
+  as captured — and the extraction prompt independently reinforces
+  leaving `email` null rather than recording an unconfirmed guess.
+- `event_type` vocabulary is unchanged — same
+  `NO_ANSWER`/`VOICEMAIL`/`BUSY`/`CALL_FAILED`/`CALL_DROPPED`/
+  `WRONG_CONTACT`/`CALLBACK_REQUESTED`/`CALL_COMPLETED` set as every other
+  call type, confirmed by the user 2026-09-24 (no new event type for
+  this).
+- MDR's `communication: "voice"` field on the inbound payload is
+  deliberately ignored — confirmed by the user as MDR-internal reference
+  only, not something to validate or branch on.
+
 ## Wrong number vs. wrong contact (both via reportWrongContact)
 
 One tool, two outcomes, distinguished by whether a referral was given —

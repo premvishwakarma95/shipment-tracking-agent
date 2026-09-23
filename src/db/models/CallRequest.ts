@@ -5,6 +5,15 @@ export const CALL_TYPES = [
   "PICKUP_TODAY",
   "DISPATCHED",
   "IN_TRANSIT",
+  // Added 2026-09-24 per MDR's request — structurally different from the
+  // other four: it collects driver/dispatcher contact info rather than a
+  // shipment status update, so it gets its own result shape
+  // (ContactUpdateResult in mdr/types.ts) and its own Vapi structured-data
+  // extraction schema (src/assistant/contactUpdateResultSchema.ts),
+  // applied per-call via assistantOverrides.analysisPlan — see
+  // mdrCallRequest.ts. Deliberately NOT folded into CommonCallResult; see
+  // CLAUDE.md's "Contact update requests" section for why.
+  "CONTACT_UPDATE_REQUEST",
 ] as const;
 
 export const CONTACT_TYPES = [
@@ -13,6 +22,11 @@ export const CONTACT_TYPES = [
   "SECONDARY_DISPATCHER",
   "CARRIER_MAIN",
   "AFTER_HOURS",
+  // Added 2026-09-24 for CONTACT_UPDATE_REQUEST calls — confirmed spelling
+  // (underscore, no space) by the user 2026-09-24; MDR's own example
+  // payload sent "CARRIER REPRESENTATIVE" with a space, which doesn't
+  // match this enum's SCREAMING_SNAKE_CASE convention.
+  "CARRIER_REPRESENTATIVE",
 ] as const;
 
 // The event_type vocabulary confirmed in the MDR Agent 3 Voice API

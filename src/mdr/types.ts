@@ -85,6 +85,30 @@ export interface CommonCallResult {
   open_issue: string | null;
 }
 
+// Result shape for CONTACT_UPDATE_REQUEST ONLY — deliberately separate
+// from CommonCallResult. Per the user's explicit direction (2026-09-24),
+// this call type's nested driver/dispatcher contact shape doesn't fit the
+// "one common structure" rule the other four call types share; see
+// CLAUDE.md's "Contact update requests" section and
+// src/assistant/contactUpdateResultSchema.ts.
+export interface ContactInfo {
+  name: string | null;
+  phone: string | null;
+  email: string | null;
+}
+
+export interface ContactUpdateResult {
+  driver: ContactInfo | null;
+  dispatcher: ContactInfo | null;
+  contacts_confirmed: boolean | null;
+  call_summary: string;
+  next_action: string | null;
+  human_escalation_required: boolean;
+  escalation_reason: string | null;
+  confidence_score: number;
+  open_issue: string | null;
+}
+
 interface WebhookEventBase {
   mdr_call_id: string;
   voice_call_id: string | null;
@@ -103,7 +127,7 @@ export type VoiceWebhookEvent =
   | (WebhookEventBase & { event_type: "CALL_FAILED" })
   | (WebhookEventBase & {
       event_type: "CALL_DROPPED";
-      partial_result: Partial<CommonCallResult>;
+      partial_result: Partial<CommonCallResult> | Partial<ContactUpdateResult>;
       call_summary: string | null;
     })
   | (WebhookEventBase & {
@@ -121,9 +145,17 @@ export type VoiceWebhookEvent =
     })
   | (WebhookEventBase & {
       event_type: "CALL_COMPLETED";
-      call_type: CallType;
+      call_type: Exclude<CallType, "CONTACT_UPDATE_REQUEST">;
       call_status: "COMPLETED";
       result: CommonCallResult;
+      recording_url: string | null;
+      transcript: string | null;
+    })
+  | (WebhookEventBase & {
+      event_type: "CALL_COMPLETED";
+      call_type: "CONTACT_UPDATE_REQUEST";
+      call_status: "COMPLETED";
+      result: ContactUpdateResult;
       recording_url: string | null;
       transcript: string | null;
     });

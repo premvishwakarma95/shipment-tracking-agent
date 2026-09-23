@@ -3,6 +3,7 @@ import { CallRequest } from "../db/models/CallRequest.js";
 import { RawCapture } from "../db/models/RawCapture.js";
 import { createOutboundCall } from "../vapi/calls.js";
 import { buildCallVariables } from "./callVariables.js";
+import { CONTACT_UPDATE_ANALYSIS_PLAN } from "../assistant/contactUpdateResultSchema.js";
 import type { CallRequestPayload } from "../mdr/types.js";
 
 export const mdrCallRequestRouter = Router();
@@ -66,6 +67,12 @@ mdrCallRequestRouter.post("/call-requests", async (req, res) => {
       assistantId: requireEnv("VAPI_ASSISTANT_ID"),
       customerNumber: callRequestDoc.contact.phone,
       variableValues,
+      // CONTACT_UPDATE_REQUEST uses its own structured-data extraction
+      // (nested driver/dispatcher shape) instead of the assistant's
+      // default — see contactUpdateResultSchema.ts.
+      ...(callRequestDoc.call_type === "CONTACT_UPDATE_REQUEST"
+        ? { analysisPlan: CONTACT_UPDATE_ANALYSIS_PLAN }
+        : {}),
     });
 
     callRequestDoc.vapi_call_id = call.id;
