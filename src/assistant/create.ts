@@ -13,8 +13,12 @@ import { buildTools } from "./tools.js";
 // firstMessage/voicemailMessage/endCallMessage (that assistant's copy is
 // specific to its own quoting domain), name, and server.url (points at
 // our own PUBLIC_BASE_URL, not theirs).
+if (!process.env.VAPI_ASSISTANT_NAME) {
+  throw new Error("VAPI_ASSISTANT_NAME is not set in .env");
+}
+
 const assistantConfig = {
-  name: "MDR Agent 3 - Everly",
+  name: process.env.VAPI_ASSISTANT_NAME,
   firstMessage: FIRST_MESSAGE,
   model: {
     provider: "openai",
