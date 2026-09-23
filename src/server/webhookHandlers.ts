@@ -1,6 +1,8 @@
 import { CallRequest, type CallRequestDoc } from "../db/models/CallRequest.js";
 import { classifyEventType } from "./callOutcome.js";
 import { sendVoiceWebhookEvent } from "../mdr/api.js";
+import { sayAndEndCall } from "../vapi/callControl.js";
+import { WRONG_NUMBER_MESSAGE } from "../assistant/prompt.js";
 import type { CommonCallResult, VoiceWebhookEvent } from "../mdr/types.js";
 
 // Vapi's inbound webhook message shapes are permissive/`any`-typed here —
@@ -36,7 +38,7 @@ export async function handleToolCalls(message: {
 
   for (const call of message.toolCallList ?? []) {
     try {
-      applyToolCall(doc, call);
+      await applyToolCall(doc, call);
       results.push({ toolCallId: call.id, result: "ok" });
     } catch (err) {
       // One bad tool call must not kill the rest of the batch.
@@ -49,17 +51,26 @@ export async function handleToolCalls(message: {
   return { results };
 }
 
-function applyToolCall(doc: CallRequestDoc, call: VapiToolCall) {
+async function applyToolCall(doc: CallRequestDoc, call: VapiToolCall) {
   const args = call.function.arguments ?? {};
 
   switch (call.function.name) {
-    case "reportWrongContact":
+    case "reportWrongContact": {
+      const referredName = (args.referred_name as string) ?? null;
+      const referredPhone = (args.referred_phone as string) ?? null;
       doc.tool_flags.wrong_contact = true;
-      doc.tool_flags.referred_contact = {
-        name: (args.referred_name as string) ?? null,
-        phone: (args.referred_phone as string) ?? null,
-      };
+      doc.tool_flags.referred_contact = { name: referredName, phone: referredPhone };
+
+      // No referral given = the wrong-number case (see prompt.ts's
+      // Introduction section): the LLM says nothing itself, so OUR server
+      // speaks MDR's exact closing line and ends the call deterministically
+      // via Live Call Control, rather than relying on the model to say a
+      // custom line and then somehow hang up — see callControl.ts for why.
+      if (!referredName && !referredPhone && doc.control_url) {
+        await sayAndEndCall(doc.control_url, WRONG_NUMBER_MESSAGE);
+      }
       return;
+    }
     case "reportCallbackRequested":
       doc.tool_flags.callback_requested = true;
       doc.tool_flags.callback_after_minutes = (args.callback_after_minutes as number) ?? null;
@@ -99,6 +110,7 @@ export async function handleEndOfCallReport(message: {
     message.endedReason,
     doc.tool_flags,
     structured.call_ended_abruptly as boolean | undefined,
+    message.transcript,
   );
 
   doc.structured_result = structured;

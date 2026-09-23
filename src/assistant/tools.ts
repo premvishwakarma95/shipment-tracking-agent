@@ -23,7 +23,7 @@ export function buildTools() {
       function: {
         name: "reportWrongContact",
         description:
-          "Call this ONLY AFTER the person has actually finished telling you the referred person's name (and phone number, if given) — do not call it the moment they say something like 'talk to...' or 'you should call...'. If they trail off, pause, or you're not sure you caught the name, ask them to repeat it first, then call this tool with what they actually said. Do not call the new number yourself.",
+          "Two cases. (1) Wrong number — the person has no connection to this shipment/driver at all: call this IMMEDIATELY with no arguments (leave referred_name/referred_phone empty) and say NOTHING yourself afterward — the system automatically speaks the closing line and ends the call for you. (2) Wrong person but they can refer you to someone else: call this ONLY AFTER the person has actually finished telling you the referred person's name (and phone number, if given) — do not call it the moment they say something like 'talk to...' or 'you should call...'. If they trail off, pause, or you're not sure you caught the name, ask them to repeat it first, then call this tool with what they actually said. Do not call the new number yourself.",
         parameters: {
           type: "object",
           properties: {

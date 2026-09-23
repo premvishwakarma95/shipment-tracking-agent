@@ -30,7 +30,17 @@ real contract now, not a placeholder guess (see
    immediately.
 2. Vapi calls the contact, runs the conversation per
    `src/assistant/prompt.ts`, calling one of the 4 tools in
-   `src/assistant/tools.ts` if a special-case outcome comes up.
+   `src/assistant/tools.ts` if a special-case outcome comes up. The fixed
+   opening (`FIRST_MESSAGE`) already includes asking permission to
+   continue ("...May I ask you a few questions about the shipment?") —
+   don't rely on a system-prompt instruction like "then continue in the
+   same turn" to add scripted follow-up content after the static first
+   message. A voice model is only invoked again once the CALLER says
+   something; there is no second "assistant turn" to generate that content
+   into if they stay silent. Confirmed empirically 2026-09-23
+   (TEST-INTRO-001): an LLM-instruction-based version of this fix did
+   nothing, the model just waited silently exactly like before. Bake
+   guaranteed-to-be-spoken content into the static message itself instead.
 3. `POST /vapi/tool-calls` (`src/server/index.ts` → `webhookHandlers.ts`)
    receives both Vapi's `tool-calls` events (writes `tool_flags` on the
    `CallRequest`) and its `end-of-call-report` (`classifyEventType` picks
@@ -70,6 +80,11 @@ Only two Mongo collections:
   per request. `lifecycle_status` (internal bookkeeping: have we heard back
   from Vapi yet?) and `event_type` (MDR-facing outcome: what happened on
   the call?) are deliberately separate fields — don't collapse them.
+  `control_url` is Vapi's Live Call Control URL for this specific call,
+  captured once at creation time (`call.monitor.controlUrl`) — used by
+  `src/vapi/callControl.ts` to inject a message/hangup mid-call server-side
+  (see "Wrong number vs. wrong contact" below). Per-call, not reusable
+  across calls.
 - `RawCapture` — unconditional, unparsed capture of every inbound payload
   (both MDR call requests and Vapi webhooks), written before any parsing.
   Audit safety net for payload shapes that aren't fully locked down yet.
@@ -96,6 +111,37 @@ The exact trigger list is confirmed by MDR (see `docs/business-requirements.md`)
 and duplicated in both `prompt.ts` and `resultSchema.ts`'s extraction
 prompt — keep those two lists in sync if MDR ever revises it.
 
+## Wrong number vs. wrong contact (both via reportWrongContact)
+
+One tool, two outcomes, distinguished by whether a referral was given —
+`reportWrongContact` called with `referred_name`/`referred_phone` both
+empty means a flat wrong number (no one to refer), populated means an
+actual referral. Both still send MDR's confirmed `WRONG_CONTACT` event
+type (there is no separate `WRONG_NUMBER` in the confirmed contract —
+don't invent one without asking MDR first; `referred_contact: {name:
+null, phone: null}` is how a wrong-number call is distinguished from a
+real referral on MDR's side).
+
+The wrong-number case does NOT go through the normal `endCall` tool /
+`endCallMessage` flow. MDR gave an exact required closing line, different
+from the normal goodbye — but Vapi's `endCallMessage` is one static string
+for the whole assistant, always spoken on every `endCall` invocation
+regardless of context, so it can't carry two different scripted farewells.
+Having the LLM speak the custom line itself and then simply not call
+`endCall` (relying on the caller to hang up) was tried and rejected: the
+call just sat open — confirmed empirically 2026-09-23 (TEST-WrongNumb-004,
+caller had to manually hang up after ~40s). The actual fix, in
+`webhookHandlers.ts`'s `applyToolCall`: when `reportWrongContact` fires
+with no referral, the server calls `sayAndEndCall()`
+(`src/vapi/callControl.ts`) against the call's Live Call Control
+`control_url` (captured on `CallRequest.control_url` at call-creation time,
+`src/vapi/calls.ts`/`mdrCallRequest.ts`) — this injects MDR's exact
+`WRONG_NUMBER_MESSAGE` (`prompt.ts`) via Vapi's `POST {controlUrl}
+{type: "say", content, endCallAfterSpoken: true}` and ends the call in one
+deterministic step, entirely outside the LLM's turn-generation loop. The
+prompt instructs the LLM to say NOTHING itself in this branch — the system
+handles both the message and the hangup.
+
 ## Known gaps / don't repeat these
 
 - **`EMAIL_REQUESTED` has no confirmed MDR event_type.** The confirmed
@@ -118,3 +164,14 @@ prompt — keep those two lists in sync if MDR ever revises it.
   (`mdr.sendVoiceWebhookEvent` failing leaves `mdr_pushed_at` null for
   manual reconciliation). Don't add one speculatively — get a retry policy
   from MDR first (`docs/requirements-tracker.md`).
+- **A silent call that disconnects must never come back `CALL_COMPLETED`.**
+  `classifyEventType` (`src/server/callOutcome.ts`) already disambiguates
+  Vapi's ambiguous `"customer-ended-call"` endedReason (same string for a
+  normal goodbye AND a mid-call drop) via the post-call extraction's
+  `call_ended_abruptly` judgment — but that judgment can't be trusted on a
+  blank transcript, there's nothing for the LLM to judge from. Confirmed
+  empirically 2026-09-23 (TEST-SILENT-005: transcript `""`, extraction
+  still reported `CALL_COMPLETED`). Fixed with a deterministic check ahead
+  of the LLM signal: if the transcript has zero content, force
+  `CALL_DROPPED` regardless of what `call_ended_abruptly` says. Don't
+  revert to trusting the extraction alone for this case.

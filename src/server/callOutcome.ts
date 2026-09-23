@@ -52,6 +52,7 @@ export function classifyEventType(
   endedReason: string | undefined,
   toolFlags: ToolFlags | undefined,
   callEndedAbruptly?: boolean,
+  transcript?: string | null,
 ): EventType {
   if (toolFlags?.wrong_contact) return "WRONG_CONTACT";
   if (toolFlags?.callback_requested) return "CALLBACK_REQUESTED";
@@ -67,8 +68,22 @@ export function classifyEventType(
     return "CALL_FAILED";
   }
 
-  if (endedReason === "customer-ended-call" && callEndedAbruptly) {
-    return "CALL_DROPPED";
+  if (mapped === "CALL_COMPLETED") {
+    // A genuinely completed call implies the caller said SOMETHING. An
+    // empty transcript means the call connected then ended with zero
+    // customer speech (e.g. picked up and immediately hung up) — the
+    // post-call extraction's call_ended_abruptly judgment can't be trusted
+    // on a blank transcript, there's nothing for it to judge from.
+    // Confirmed empirically 2026-09-23 (TEST-SILENT-005): extraction left
+    // it uncaught, reported CALL_COMPLETED on transcript: "". Check
+    // deterministically instead of relying on the LLM for this case.
+    if (!transcript || transcript.trim().length === 0) {
+      return "CALL_DROPPED";
+    }
+
+    if (endedReason === "customer-ended-call" && callEndedAbruptly) {
+      return "CALL_DROPPED";
+    }
   }
 
   return mapped;

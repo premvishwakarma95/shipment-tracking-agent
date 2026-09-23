@@ -97,6 +97,10 @@ const CallRequestSchema = new Schema(
     questions: { type: [String], default: [] },
 
     vapi_call_id: { type: String, index: true, sparse: true },
+    // Live Call Control URL for this specific call (docs.vapi.ai/calls/
+    // call-features) — lets webhookHandlers.ts inject a deterministic
+    // spoken message + hangup mid-call (see src/vapi/callControl.ts).
+    control_url: { type: String, default: null },
     lifecycle_status: {
       type: String,
       enum: LIFECYCLE_STATUSES,

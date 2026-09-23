@@ -39,7 +39,16 @@ const assistantConfig = {
   },
   silenceTimeoutSeconds: 60,
   maxDurationSeconds: 900,
-  firstMessageMode: "assistant-waits-for-user",
+  // "assistant-waits-for-user" made the model treat the intro as a
+  // question it had to pause on indefinitely — if the callee didn't
+  // respond, it just went silent instead of continuing into "May I ask
+  // you a few questions..." (confirmed by MDR + reproduced in our own
+  // testing, 2026-09-23). "assistant-speaks-first" lets it keep going on
+  // its own per the Introduction section in prompt.ts. Re-verify
+  // voicemail detection still behaves correctly after this change — it
+  // wasn't mirrored from the reference project's settings, so its
+  // interaction with voicemailDetection below hasn't been tested here.
+  firstMessageMode: "assistant-speaks-first",
   serverMessages: ["end-of-call-report", "status-update"],
   artifactPlan: {
     transcriptPlan: { enabled: true },

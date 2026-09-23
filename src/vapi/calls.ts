@@ -24,6 +24,13 @@ export interface VapiCall {
   analysis?: {
     structuredData?: Record<string, unknown>;
   };
+  // Live Call Control (docs.vapi.ai/calls/call-features) — a per-call URL
+  // returned at creation time, used to inject a spoken message and/or end
+  // the call server-side mid-conversation. See src/vapi/callControl.ts.
+  monitor?: {
+    listenUrl?: string;
+    controlUrl?: string;
+  };
 }
 
 export async function createOutboundCall(params: CreateCallParams): Promise<VapiCall> {

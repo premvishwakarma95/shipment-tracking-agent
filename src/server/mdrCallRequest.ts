@@ -69,6 +69,7 @@ mdrCallRequestRouter.post("/call-requests", async (req, res) => {
     });
 
     callRequestDoc.vapi_call_id = call.id;
+    callRequestDoc.control_url = call.monitor?.controlUrl ?? null;
     callRequestDoc.lifecycle_status = "CALLING";
     await callRequestDoc.save();
 
