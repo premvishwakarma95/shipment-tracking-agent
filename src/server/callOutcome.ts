@@ -6,11 +6,20 @@ type ToolFlags = CallRequestDoc["tool_flags"];
 // Allowlist, not denylist (same convention as the reference project):
 // anything we don't explicitly recognize maps to the conservative
 // CALL_FAILED rather than being assumed successful.
+//
+// CALL_DROPPED vs CALL_HANG (added 2026-09-24, confirmed with MDR/user):
+// CALL_DROPPED is now reserved for endedReasons Vapi explicitly attributes
+// to a technical/connection failure (phone-call-provider-closed-websocket
+// is the one confirmed example) — NOT an inferred/ambiguous case. Anything
+// where a person just stopped engaging (silence timeout) or disconnected
+// without a technical signal maps to CALL_HANG instead — see the
+// classifyEventType logic below for the inferred cases (empty transcript,
+// abrupt customer-ended-call).
 const ENDED_REASON_MAP: Record<string, EventType> = {
   "assistant-ended-call": "CALL_COMPLETED",
   "customer-ended-call": "CALL_COMPLETED",
   "assistant-forwarded-call": "CALL_COMPLETED",
-  "silence-timed-out": "CALL_DROPPED",
+  "silence-timed-out": "CALL_HANG",
   "customer-did-not-give-microphone-permission": "CALL_FAILED",
   "phone-call-provider-closed-websocket": "CALL_DROPPED",
   "pipeline-error": "CALL_FAILED",
@@ -77,12 +86,21 @@ export function classifyEventType(
     // Confirmed empirically 2026-09-23 (TEST-SILENT-005): extraction left
     // it uncaught, reported CALL_COMPLETED on transcript: "". Check
     // deterministically instead of relying on the LLM for this case.
+    // CALL_HANG, not CALL_DROPPED — Vapi gave us no technical-failure
+    // signal here, this is the customer disconnecting without engaging.
     if (!transcript || transcript.trim().length === 0) {
-      return "CALL_DROPPED";
+      return "CALL_HANG";
     }
 
+    // Same reasoning — an abrupt mid-call cutoff with no technical signal
+    // from Vapi defaults to CALL_HANG (confirmed with MDR/user 2026-09-24:
+    // we cannot reliably tell "line dropped" from "they hung up on
+    // purpose" once conversation had already started, so CALL_HANG is the
+    // default and CALL_DROPPED is reserved for endedReasons that
+    // explicitly indicate a technical failure, e.g.
+    // phone-call-provider-closed-websocket above).
     if (endedReason === "customer-ended-call" && callEndedAbruptly) {
-      return "CALL_DROPPED";
+      return "CALL_HANG";
     }
   }
 

@@ -130,6 +130,14 @@ export type VoiceWebhookEvent =
       partial_result: Partial<CommonCallResult> | Partial<ContactUpdateResult>;
       call_summary: string | null;
     })
+  // Same shape as CALL_DROPPED, confirmed by the user 2026-09-24 — see
+  // CallRequest.ts's EVENT_TYPES comment for why these are two separate
+  // event types now instead of one.
+  | (WebhookEventBase & {
+      event_type: "CALL_HANG";
+      partial_result: Partial<CommonCallResult> | Partial<ContactUpdateResult>;
+      call_summary: string | null;
+    })
   | (WebhookEventBase & {
       event_type: "CALLBACK_REQUESTED";
       callback_after_minutes: number | null;

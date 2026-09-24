@@ -275,13 +275,17 @@ function buildWebhookEvent(
     case "CALL_FAILED":
       return { event_type: eventType, mdr_call_id: doc.mdr_call_id, voice_call_id: voiceCallId };
 
-    case "CALL_DROPPED": {
+    // Identical construction, only event_type differs — see CallRequest.ts's
+    // EVENT_TYPES comment for what distinguishes the two (classifyEventType
+    // in callOutcome.ts is where that distinction is actually decided).
+    case "CALL_DROPPED":
+    case "CALL_HANG": {
       const result =
         doc.call_type === "CONTACT_UPDATE_REQUEST"
           ? buildContactUpdateResult(structured, doc.tool_flags)
           : buildCommonResult(structured, doc.tool_flags);
       return {
-        event_type: "CALL_DROPPED",
+        event_type: eventType,
         mdr_call_id: doc.mdr_call_id,
         voice_call_id: voiceCallId,
         partial_result: result,

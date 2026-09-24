@@ -111,6 +111,39 @@ The exact trigger list is confirmed by MDR (see `docs/business-requirements.md`)
 and duplicated in both `prompt.ts` and `resultSchema.ts`'s extraction
 prompt — keep those two lists in sync if MDR ever revises it.
 
+## CALL_DROPPED vs CALL_HANG
+
+Added 2026-09-24 per MDR's request — splits what used to be one
+`CALL_DROPPED` bucket into two event types, confirmed with the user:
+
+- **`CALL_DROPPED`** — Vapi explicitly told us the connection itself
+  failed (currently only `phone-call-provider-closed-websocket` in
+  `ENDED_REASON_MAP`, `src/server/callOutcome.ts`). A genuine technical
+  failure, not an inference.
+- **`CALL_HANG`** — everything else that used to be `CALL_DROPPED`:
+  `silence-timed-out` (we gave up waiting), an empty transcript (customer
+  never spoke, then disconnected), and an abrupt mid-call
+  `customer-ended-call` cutoff with `call_ended_abruptly: true`. Same
+  payload shape as `CALL_DROPPED` (`partial_result`/`call_summary`) —
+  `buildWebhookEvent` in `webhookHandlers.ts` handles both with the same
+  case block, only `event_type` differs.
+
+**Known, accepted limitation:** Vapi gives the identical `endedReason`
+string (`"customer-ended-call"`) whether a call ended normally, the line
+technically dropped mid-conversation, or the customer hung up on purpose
+— there is no reliable signal to tell "technical" apart from
+"intentional" once conversation had already started. The default for
+that ambiguous case is `CALL_HANG`; `CALL_DROPPED` is reserved for
+endedReasons Vapi explicitly attributes to a connection/technical
+failure. This means some genuine network drops that happen to look like
+a clean hangup to Vapi will be misclassified as `CALL_HANG` — a real
+accuracy ceiling given what Vapi actually reports, not a bug to chase
+further without a better signal from Vapi.
+
+Don't reclassify which `endedReason`/inference maps to which of the two
+without the same kind of explicit MDR/user confirmation this split
+required — it's not an obvious default either direction.
+
 ## Contact update requests
 
 `CONTACT_UPDATE_REQUEST` (added 2026-09-24) is structurally different from

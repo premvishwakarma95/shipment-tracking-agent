@@ -44,6 +44,17 @@ export const EVENT_TYPES = [
   "CALLBACK_REQUESTED",
   "WRONG_CONTACT",
   "CALL_COMPLETED",
+  // Added 2026-09-24 per MDR's request — splits what used to be one
+  // CALL_DROPPED bucket in two: CALL_DROPPED now means a genuine
+  // technical/network failure (Vapi explicitly told us the connection
+  // broke), CALL_HANG means the customer intentionally disconnected
+  // without engaging (silence timeout, empty-transcript hangup, or an
+  // abrupt mid-call cutoff with no technical signal from Vapi). See
+  // classifyEventType in callOutcome.ts and CLAUDE.md's "CALL_DROPPED vs
+  // CALL_HANG" section for the exact mapping — confirmed with MDR/user
+  // 2026-09-24, don't reclassify a path between the two without the same
+  // kind of explicit confirmation.
+  "CALL_HANG",
 ] as const;
 
 // Internal-only bookkeeping for where THIS record is in its own lifecycle.
