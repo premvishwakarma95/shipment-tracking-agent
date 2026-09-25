@@ -1,7 +1,15 @@
 import type { EventType } from "../mdr/types.js";
 import type { CallRequestDoc } from "../db/models/CallRequest.js";
+import { END_CALL_MESSAGE } from "../assistant/prompt.js";
 
 type ToolFlags = CallRequestDoc["tool_flags"];
+
+// Derived from END_CALL_MESSAGE, NOT a separately hardcoded copy — if MDR
+// ever changes the closing wording, this stays in sync automatically since
+// it reads the live constant instead of a second string someone has to
+// remember to update. First sentence only (not the full message with
+// punctuation) so minor ASR transcription noise doesn't break the match.
+const COMPLETION_SIGNAL = END_CALL_MESSAGE.split(".")[0].trim();
 
 // Allowlist, not denylist (same convention as the reference project):
 // anything we don't explicitly recognize maps to the conservative
@@ -47,16 +55,21 @@ const ENDED_REASON_MAP: Record<string, EventType> = {
 // MDR Agent 3 Voice API Integration Guide's webhook event list has no
 // EMAIL_REQUESTED event. See docs/requirements-tracker.md.
 //
-// `callEndedAbruptly` (from the post-call structured extraction, see
-// resultSchema.ts's `call_ended_abruptly`) is the tiebreaker for
-// "customer-ended-call" specifically. Confirmed empirically 2026-09-14
-// (TEST-014, a deliberate mid-question hangup): Vapi's endedReason for
-// customer-initiated hangups is the SAME string ("customer-ended-call")
-// whether the caller finished normally or the call just dropped
-// mid-sentence — the telephony layer can't tell those apart, so
-// ENDED_REASON_MAP alone silently classified a dropped call as
-// CALL_COMPLETED. Only the conversation content can distinguish them, so
-// that's the one case that needs the extraction's judgment call.
+// "customer-ended-call" is Vapi's ambiguous endedReason — the SAME string
+// whether the caller finished normally or the call dropped mid-sentence
+// (confirmed empirically 2026-09-14, TEST-014). ENDED_REASON_MAP alone
+// can't tell those apart, so classifyEventType below checks the transcript
+// for COMPLETION_SIGNAL as the deterministic tiebreaker.
+//
+// `callEndedAbruptly` (the post-call structured extraction's own guess,
+// see resultSchema.ts's `call_ended_abruptly`) is kept as a SECONDARY
+// signal only, OR'd alongside the transcript check — not trusted alone
+// anymore. Confirmed unreliable 2026-09-24/25 (MDR's own test call,
+// mdr_call_id A3-UNEEJXYRVWTW: transcript was an obvious abrupt cutoff
+// after only a fragment of the AI's greeting, zero customer speech, and
+// the extraction's OWN call_summary described it as such — but it still
+// returned call_ended_abruptly: false). Don't go back to trusting that
+// field alone for this decision.
 export function classifyEventType(
   endedReason: string | undefined,
   toolFlags: ToolFlags | undefined,
@@ -80,27 +93,34 @@ export function classifyEventType(
   if (mapped === "CALL_COMPLETED") {
     // A genuinely completed call implies the caller said SOMETHING. An
     // empty transcript means the call connected then ended with zero
-    // customer speech (e.g. picked up and immediately hung up) — the
-    // post-call extraction's call_ended_abruptly judgment can't be trusted
-    // on a blank transcript, there's nothing for it to judge from.
-    // Confirmed empirically 2026-09-23 (TEST-SILENT-005): extraction left
-    // it uncaught, reported CALL_COMPLETED on transcript: "". Check
-    // deterministically instead of relying on the LLM for this case.
-    // CALL_HANG, not CALL_DROPPED — Vapi gave us no technical-failure
-    // signal here, this is the customer disconnecting without engaging.
+    // customer speech (e.g. picked up and immediately hung up). Confirmed
+    // empirically 2026-09-23 (TEST-SILENT-005): the extraction left it
+    // uncaught, reported CALL_COMPLETED on transcript: "". CALL_HANG, not
+    // CALL_DROPPED — Vapi gave us no technical-failure signal here, this
+    // is the customer disconnecting without engaging.
     if (!transcript || transcript.trim().length === 0) {
       return "CALL_HANG";
     }
 
-    // Same reasoning — an abrupt mid-call cutoff with no technical signal
-    // from Vapi defaults to CALL_HANG (confirmed with MDR/user 2026-09-24:
-    // we cannot reliably tell "line dropped" from "they hung up on
-    // purpose" once conversation had already started, so CALL_HANG is the
-    // default and CALL_DROPPED is reserved for endedReasons that
-    // explicitly indicate a technical failure, e.g.
+    // Same reasoning, broadened (added 2026-09-25 per MDR's report,
+    // mdr_call_id A3-UNEEJXYRVWTW — see comment above): it's not just a
+    // fully empty transcript that's suspect. ANY "customer-ended-call"
+    // where the conversation didn't actually reach the assistant's own
+    // closing line is either zero engagement OR a partially-answered call
+    // cut short before finishing — neither is a real completion. Check
+    // deterministically for COMPLETION_SIGNAL in the transcript instead of
+    // trusting endedReason alone; call_ended_abruptly is kept as a second,
+    // OR'd signal in case the extraction catches something this text
+    // check doesn't. CALL_HANG, not CALL_DROPPED — same reasoning as
+    // above: no technical-failure signal from Vapi, so this defaults to
+    // CALL_HANG, and CALL_DROPPED stays reserved for endedReasons that
+    // explicitly indicate a technical failure (e.g.
     // phone-call-provider-closed-websocket above).
-    if (endedReason === "customer-ended-call" && callEndedAbruptly) {
-      return "CALL_HANG";
+    if (endedReason === "customer-ended-call") {
+      const reachedClosing = transcript.includes(COMPLETION_SIGNAL);
+      if (!reachedClosing || callEndedAbruptly) {
+        return "CALL_HANG";
+      }
     }
   }
 
