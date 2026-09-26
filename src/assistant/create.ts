@@ -74,20 +74,30 @@ const assistantConfig = {
     backoffSeconds: 1,
   },
   // Per MDR's requested opening script: say just "Hello.", then wait for
-  // the customer to respond; if they stay silent, check in once at 15s,
+  // the customer to respond; if they stay silent, check in once at 14s,
   // then give up and end the call at 30s (absolute, from the same reset
-  // point — not 15s after the first hook).
+  // point — not 16s after the first hook).
   //
-  // Two customer.speech.timeout hooks, timeoutSeconds: 15 and 30 — both
-  // individually confirmed reliable via extensive real-phone-call testing
-  // 2026-09-26 (3s/5s/10s consistently never fired — repeated clean tests,
-  // real pickups, 20s+ of silence, still nothing — while 15s and 30s fired
-  // reliably every time, including together in the same call). This
-  // matches a known Vapi platform bug independently reported by other
-  // users (community reports describe the same "hooks below ~X seconds
-  // never trigger" pattern, just with a different account-specific floor)
-  // — not something fixable via config, so don't lower either value below
-  // 15 without re-confirming first.
+  // Two customer.speech.timeout hooks, timeoutSeconds: 14 and 30. Extensive
+  // real-phone-call testing 2026-09-26 stepped the first hook down from 15
+  // to 10 one second at a time: 14/13/12/11 each fired reliably when a
+  // real call was tested, 10 fired in one call but not another. The
+  // deciding factor isn't the raw threshold alone — a hook this short only
+  // reliably arms if there's been at least one prior "customer speech"
+  // event (even the false-positive automated "now being recorded"
+  // announcement counts, see prompt.ts's Introduction section) to reset
+  // from; measured from pure call-start with zero speech at all, very
+  // short thresholds can silently fail to arm (confirmed via two back-to-
+  // back calls with identical config, one with the announcement and one
+  // without — only the one with it fired hook 1). 14 was chosen as a safe
+  // margin above the observed failure point (10s). The 30s second hook has
+  // never shown this issue, firing reliably from pure call-start with zero
+  // prior speech every time it's been tested. This also matches a known
+  // Vapi platform bug independently reported by other users (community
+  // reports describe short customer.speech.timeout hooks not triggering as
+  // configured) — not something fixable via our config beyond picking a
+  // safe margin. Don't lower the first hook below 14 without re-testing
+  // with a genuinely silent call (no announcement) specifically.
   //
   // triggerResetMode: "onUserSpeech" on both — a deliberate, explicit
   // tradeoff (confirmed with the user 2026-09-26) over "never": "never"
@@ -112,7 +122,7 @@ const assistantConfig = {
   hooks: [
     {
       on: "customer.speech.timeout",
-      options: { timeoutSeconds: 15, triggerMaxCount: 1, triggerResetMode: "onUserSpeech" },
+      options: { timeoutSeconds: 14, triggerMaxCount: 1, triggerResetMode: "onUserSpeech" },
       do: [{ type: "say", exact: "Hello? Are you there?" }],
     },
     {
