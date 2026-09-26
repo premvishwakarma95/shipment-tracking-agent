@@ -41,6 +41,12 @@ const assistantConfig = {
     model: "nova-3",
     language: "en",
   },
+  // Redundant backstop for the opening Hello script below: if the customer
+  // never speaks at all (not even in response to the customer.speech.timeout
+  // hook's check-in), Vapi itself ends the call (endedReason:
+  // "silence-timed-out", mapped to CALL_HANG in callOutcome.ts) after 60s
+  // of total silence, well before maxDurationSeconds would otherwise be
+  // reached.
   silenceTimeoutSeconds: 60,
   maxDurationSeconds: 900,
   // "assistant-waits-for-user" made the model treat the intro as a
@@ -53,7 +59,7 @@ const assistantConfig = {
   // wasn't mirrored from the reference project's settings, so its
   // interaction with voicemailDetection below hasn't been tested here.
   firstMessageMode: "assistant-speaks-first",
-  serverMessages: ["end-of-call-report", "status-update"],
+  serverMessages: ["end-of-call-report"],
   artifactPlan: {
     transcriptPlan: { enabled: true },
     recordingEnabled: true,
@@ -67,15 +73,55 @@ const assistantConfig = {
     voiceSeconds: 0.2,
     backoffSeconds: 1,
   },
+  // Per MDR's requested opening script: say just "Hello.", then wait for
+  // the customer to respond; if they stay silent, check in once at 15s,
+  // then give up and end the call at 30s (absolute, from the same reset
+  // point — not 15s after the first hook).
+  //
+  // Two customer.speech.timeout hooks, timeoutSeconds: 15 and 30 — both
+  // individually confirmed reliable via extensive real-phone-call testing
+  // 2026-09-26 (3s/5s/10s consistently never fired — repeated clean tests,
+  // real pickups, 20s+ of silence, still nothing — while 15s and 30s fired
+  // reliably every time, including together in the same call). This
+  // matches a known Vapi platform bug independently reported by other
+  // users (community reports describe the same "hooks below ~X seconds
+  // never trigger" pattern, just with a different account-specific floor)
+  // — not something fixable via config, so don't lower either value below
+  // 15 without re-confirming first.
+  //
+  // triggerResetMode: "onUserSpeech" on both — a deliberate, explicit
+  // tradeoff (confirmed with the user 2026-09-26) over "never": "never"
+  // would avoid ever re-arming mid-call, but the false-positive automated
+  // "now being recorded" announcement (see prompt.ts's Introduction
+  // section) happens in nearly every real test call, and "never" means
+  // once that happens both hooks are permanently disarmed for the rest of
+  // the call — in practice the give-up/hangup would almost never fire at
+  // all. "onUserSpeech" recovers from that false positive reliably, at the
+  // accepted cost that a genuine mid-call pause longer than 15s (e.g. the
+  // caller thinking before answering a question) can also re-trigger these
+  // same hooks and end a real, engaged call early — confirmed via real
+  // transcripts (TEST-LOCAL-HELLOFLOW-034/035) before this tradeoff was
+  // explicitly chosen. If that turns out to happen often in practice,
+  // revisit this — there is no native-hooks config that avoids both
+  // failure modes at once.
+  //
+  // Explicit array, NOT omitted — Vapi's PATCH only updates fields actually
+  // present in the request body; omitting `hooks` leaves whatever was
+  // previously live untouched instead of clearing it (confirmed empirically
+  // 2026-09-25).
   hooks: [
     {
       on: "customer.speech.timeout",
+      options: { timeoutSeconds: 15, triggerMaxCount: 1, triggerResetMode: "onUserSpeech" },
       do: [{ type: "say", exact: "Hello? Are you there?" }],
-      options: {
-        timeoutSeconds: 30,
-        triggerMaxCount: 1,
-        triggerResetMode: "onUserSpeech",
-      },
+    },
+    {
+      on: "customer.speech.timeout",
+      options: { timeoutSeconds: 30, triggerMaxCount: 1, triggerResetMode: "onUserSpeech" },
+      do: [
+        { type: "say", exact: "Okay, I'll try again later. Thank you." },
+        { type: "tool", tool: { type: "endCall" } },
+      ],
     },
   ],
   voicemailDetection: {

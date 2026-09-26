@@ -102,12 +102,20 @@ export function classifyEventType(
       return "CALL_HANG";
     }
 
-    // Same reasoning, broadened (added 2026-09-25 per MDR's report,
-    // mdr_call_id A3-UNEEJXYRVWTW — see comment above): it's not just a
-    // fully empty transcript that's suspect. ANY "customer-ended-call"
-    // where the conversation didn't actually reach the assistant's own
-    // closing line is either zero engagement OR a partially-answered call
-    // cut short before finishing — neither is a real completion. Check
+    // No customer speech at all, even though the transcript has content
+    // (e.g. just the opening "Hello."/hook check-in with nobody ever
+    // replying). A transcript containing only our own lines is exactly as
+    // much a non-completion as an empty one.
+    if (!transcript.includes("User:")) {
+      return "CALL_HANG";
+    }
+
+    // Broadened (added 2026-09-25 per MDR's report, mdr_call_id
+    // A3-UNEEJXYRVWTW — see comment above): it's not just a fully empty
+    // transcript that's suspect. ANY "customer-ended-call" where the
+    // conversation didn't actually reach the assistant's own closing line
+    // is either zero engagement OR a partially-answered call cut short
+    // before finishing — neither is a real completion. Check
     // deterministically for COMPLETION_SIGNAL in the transcript instead of
     // trusting endedReason alone; call_ended_abruptly is kept as a second,
     // OR'd signal in case the extraction catches something this text
@@ -116,7 +124,13 @@ export function classifyEventType(
     // CALL_HANG, and CALL_DROPPED stays reserved for endedReasons that
     // explicitly indicate a technical failure (e.g.
     // phone-call-provider-closed-websocket above).
-    if (endedReason === "customer-ended-call") {
+    //
+    // Also applies to "assistant-ended-call" — a defensive safety net in
+    // case the model ever calls its own endCall tool prematurely, before
+    // reaching a real completion (it wouldn't have spoken endCallMessage/
+    // COMPLETION_SIGNAL yet in that case, so the same text check catches
+    // it correctly rather than reporting a hollow CALL_COMPLETED).
+    if (endedReason === "customer-ended-call" || endedReason === "assistant-ended-call") {
       const reachedClosing = transcript.includes(COMPLETION_SIGNAL);
       if (!reachedClosing || callEndedAbruptly) {
         return "CALL_HANG";

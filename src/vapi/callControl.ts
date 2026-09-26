@@ -12,7 +12,7 @@
 
 const TIMEOUT_MS = 15_000;
 
-export async function sayAndEndCall(controlUrl: string, content: string): Promise<void> {
+async function postSay(controlUrl: string, content: string, endCallAfterSpoken: boolean): Promise<void> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
@@ -23,21 +23,21 @@ export async function sayAndEndCall(controlUrl: string, content: string): Promis
         "Content-Type": "application/json",
         Authorization: `Bearer ${process.env.VAPI_API_KEY ?? ""}`,
       },
-      body: JSON.stringify({
-        type: "say",
-        content,
-        endCallAfterSpoken: true,
-      }),
+      body: JSON.stringify({ type: "say", content, endCallAfterSpoken }),
       signal: controller.signal,
     });
 
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      console.error(`[callControl] sayAndEndCall failed: HTTP ${res.status} ${text.slice(0, 300)}`);
+      console.error(`[callControl] say failed: HTTP ${res.status} ${text.slice(0, 300)}`);
     }
   } catch (err) {
-    console.error("[callControl] sayAndEndCall request failed", err);
+    console.error("[callControl] say request failed", err);
   } finally {
     clearTimeout(timeout);
   }
+}
+
+export async function sayAndEndCall(controlUrl: string, content: string): Promise<void> {
+  await postSay(controlUrl, content, true);
 }
