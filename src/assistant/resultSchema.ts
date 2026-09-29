@@ -1,10 +1,24 @@
 // JSON Schema for Vapi's post-call structured-data extraction
-// (analysisPlan.structuredDataPlan). One superset schema shared by all 4
-// call types, per the confirmed "MDR Agent 3 – Voice API Integration
-// Guide" §7A: "Use one common CALL_COMPLETED response structure ... Do not
-// change the field names or response structure for different call types."
-// Fields irrelevant to a given call type simply extract as null. Must be
-// kept in sync with CommonCallResult in src/mdr/types.ts.
+// (analysisPlan.structuredDataPlan). One superset schema shared by every
+// shipment on a call, per the confirmed "MDR Agent 3 – Voice API
+// Integration Guide" §7A: "Use one common CALL_COMPLETED response
+// structure ... Do not change the field names or response structure for
+// different call types." Fields irrelevant to a given shipment simply
+// extract as null.
+//
+// CHANGED 2026-09-28: MDR moved from one shipment per call to an array of
+// shipments per call. Rather than extracting one flat result for the whole
+// call, this now extracts a `shipments` ARRAY — one entry per shipment
+// discussed, each shaped like the old single-shipment result plus a
+// `shipment_id` to attribute it correctly. Validated empirically the same
+// day (throwaway transient-assistant test call, 3 fake shipments discussed
+// back-to-back with near-identical phrasing) that Vapi's extraction
+// reliably keeps each shipment's answers in its own entry with no
+// cross-bleed — see chat history for the raw result. Also folds in the
+// driver/dispatcher contact fields from the now-retired
+// CONTACT_UPDATE_REQUEST call type's separate schema (contact-detail
+// collection is no longer its own call type — see CLAUDE.md's "Contact
+// update requests" section).
 //
 // Every field is nullable EXCEPT confidence_score/call_summary (see below), and
 // the extraction prompt is explicit about never inferring a value — this is
@@ -18,6 +32,12 @@
 // must be a single string, not a JSON-Schema-draft-style union array like
 // ["string", "null"] (Vapi's assistant-publish validation rejects that).
 // Nullability is instead expressed with a separate `nullable: true` flag.
+// NOTE: `driver`/`dispatcher` apply `nullable: true` to a nested `object`
+// type (not just primitives, which is all the single-shipment schema ever
+// needed) — this specific combination hasn't been empirically verified
+// against a real call the way the array-of-shipments structure has. Watch
+// the first real multi-shipment contact-update test for schema validation
+// errors or unexpected null-handling here.
 //
 // `additionalProperties: false` + every field listed in `required` (this
 // is NOT the same as "must be non-null" — a field can be required-but-
@@ -31,33 +51,65 @@
 // forward, even ones added later.
 
 export const RESULT_EXTRACTION_PROMPT = `
-Extract only what the caller explicitly stated during this call. Use null
-for anything not clearly confirmed — never infer, guess, or carry forward a
-value from context that the caller did not actually say on this call.
+This call may cover MULTIPLE shipments, discussed one at a time. Produce a
+SEPARATE entry in the "shipments" array for every shipment_id actually
+discussed on this call — never merge information from different shipments
+into one entry, even if their questions/answers looked similar (e.g. two
+shipments both "in transit"). Each entry's shipment_id must match exactly
+the ID used for that shipment during the call.
+
+For every field within a shipment's entry: extract only what the caller
+explicitly stated for THAT shipment during this call. Use null for
+anything not clearly confirmed for that specific shipment — never infer,
+guess, or carry forward a value from a different shipment or from context.
+
+CRITICAL — when the caller DID give a clear, direct answer to a question
+that corresponds to one of this schema's fields, you MUST record that
+answer in the matching field. Do NOT describe it only in call_summary and
+leave the structured field null — that is a mistake, not caution. null is
+ONLY for genuinely unclear, unanswered, or not-discussed items, never for
+something the caller plainly confirmed or denied. Common mappings, so
+there's no ambiguity about where a clear answer belongs:
+- "Has a driver been assigned?" -> Yes/No -> driver_assigned: true/false
+- "Has the required equipment been assigned?" -> Yes/No -> equipment_assigned: true/false
+- "Is the scheduled pickup date still correct?" -> Yes/No -> scheduled_pickup_date_correct: true/false
+- "Is the appointment confirmed?" -> Yes -> appointment_status: "CONFIRMED"; a clear No/not yet -> "NOT_CONFIRMED"
+- "Is there any delay?" -> Yes/No -> delay: true/false (and delay_reason/delay_minutes/issue_type if given)
+- "Has delivery/pickup happened yet?" -> Yes/No -> delivery_completed / pickup_completed: true/false
+- "Where are you now?" / current location stated -> current_location: (the location)
+- "What is your current ETA?" / an ETA stated -> eta: (the ETA)
+If a shipment's entry has several fields left null while its own
+call_summary casually states the answers in prose, that is a sign fields
+were missed — re-check the transcript for that shipment before finalizing.
 
 IMPORTANT EXCEPTION — confidence_score and call_summary are NOT
-caller-stated facts, they are YOUR OWN assessment of this call, so the null
-rule above does NOT apply to them. Always fill both in, even when every
-other field came back null (e.g. a very short or unclear call):
+caller-stated facts, they are YOUR OWN assessment of THAT shipment's
+portion of the call, so the null rule above does NOT apply to them. Always
+fill both in for every shipment entry, even when every other field for
+that shipment came back null (e.g. a very short or unclear exchange):
 - confidence_score: a number from 0.00 to 1.00 reflecting how confident YOU
-  are that you correctly understood and extracted this call's information
-  (based on speech clarity and how directly questions were answered) — NOT
-  a shipment-risk or carrier rating. 0.90-1.00 = very clear, 0.70-0.89 =
-  reasonably clear, below 0.70 = unclear/uncertain. Never leave this null.
-- call_summary: 1-2 plain-language sentences describing what happened on
-  this call, even if most data fields are null (e.g. "Driver could not
-  confirm an ETA."). Never leave this null.
-- call_ended_abruptly: true if the call was cut off or disconnected before
-  reaching a natural conclusion — e.g. you were still asking a question and
-  got no final reply, or the conversation just stops mid-exchange with no
-  goodbye. false if the call reached a natural wrap-up (you or the caller
-  said something like thanks/goodbye, or the caller clearly finished
-  giving what they could before the call ended normally). Never leave this
-  null — when genuinely unsure, false is the safer default.
+  are that you correctly understood and extracted THIS SHIPMENT's
+  information (based on speech clarity and how directly questions were
+  answered) — NOT a shipment-risk or carrier rating. 0.90-1.00 = very
+  clear, 0.70-0.89 = reasonably clear, below 0.70 = unclear/uncertain.
+  Never leave this null.
+- call_summary: 1-2 plain-language sentences describing what was discussed
+  for THAT shipment specifically, even if most of its fields are null
+  (e.g. "Driver could not confirm an ETA for this shipment."). Never leave
+  this null.
 
-For human_escalation_required and escalation_reason: set
-human_escalation_required to true ONLY if the conversation shows one of
-these specific conditions, per MDR's confirmed escalation rule —
+For driver_name/driver_phone/driver_email and dispatcher_name/
+dispatcher_phone/dispatcher_email within a shipment's entry: only fill
+these in if that shipment's conversation actually asked for and captured
+driver/dispatcher contact details — this does not apply to most
+shipments. Leave all of them null when contact details were never
+discussed for that shipment. Same rule as every other field: never guess
+or carry a contact from a different shipment.
+
+For human_escalation_required and escalation_reason (per shipment): set
+human_escalation_required to true ONLY if that shipment's portion of the
+conversation shows one of these specific conditions, per MDR's confirmed
+escalation rule —
 - truck breakdown or mechanical failure
 - an accident
 - the driver cannot complete the move
@@ -67,23 +119,37 @@ these specific conditions, per MDR's confirmed escalation rule —
 - the contact specifically asked for a human
 - an important answer could not be confidently understood
 - another serious operational issue outside the normal call flow
-If none of these apply, human_escalation_required must be false and
-escalation_reason must be null. If true, escalation_reason must briefly
-state which condition applied and why.
+If none of these apply to that shipment, human_escalation_required must be
+false and escalation_reason must be null. If true, escalation_reason must
+briefly state which condition applied and why.
 
-For open_issue: a brief plain-language description of anything raised on
-this call that is still UNRESOLVED and should be flagged for follow-up on
-the NEXT call to this shipment/contact — e.g. "Container leakage reported,
-not yet communicated to dispatch." or "Driver unsure whether appointment
-was rescheduled, needs confirmation next call." Use null if the call ended
-with nothing outstanding to follow up on. This is different from
-delay_reason/issue_type, which describe the cause of a delay on THIS call —
-open_issue is specifically about what still needs attention going forward.
+For open_issue (per shipment): a brief plain-language description of
+anything raised about THAT shipment on this call that is still UNRESOLVED
+and should be flagged for follow-up on the NEXT call about it — e.g.
+"Container leakage reported, not yet communicated to dispatch." or "Driver
+unsure whether appointment was rescheduled, needs confirmation next call."
+Use null if that shipment's portion of the call ended with nothing
+outstanding to follow up on. This is different from delay_reason/
+issue_type, which describe the cause of a delay on THIS call — open_issue
+is specifically about what still needs attention going forward.
+
+call_ended_abruptly is about the WHOLE CALL, not any one shipment — true
+if the call was cut off or disconnected before reaching a natural
+conclusion (e.g. still mid-question with no final reply, or the
+conversation just stops with no goodbye), false if it reached a natural
+wrap-up (thanks/goodbye said, or the caller clearly finished giving what
+they could before the call ended normally). Never leave this null — when
+genuinely unsure, false is the safer default.
 `.trim();
 
-export const RESULT_SCHEMA = {
+const SHIPMENT_RESULT_ITEM_SCHEMA = {
   type: "object",
   properties: {
+    // Must match the shipment_id used for this shipment during the call —
+    // this is how each entry gets attributed back to the right inbound
+    // shipment in webhookHandlers.ts.
+    shipment_id: { type: "string" },
+
     driver_confirmed: { type: "boolean", nullable: true },
     driver_assigned: { type: "boolean", nullable: true },
     equipment_assigned: { type: "boolean", nullable: true },
@@ -91,6 +157,12 @@ export const RESULT_SCHEMA = {
     pickup_completed: { type: "boolean", nullable: true },
     pickup_completed_at: { type: "string", nullable: true },
     delivery_completed: { type: "boolean", nullable: true },
+    // Added 2026-09-29 — DISPATCHED's "Is the scheduled pickup date still
+    // correct?" question had no matching field, so this answer either got
+    // dropped or the model invented a field name for it (confirmed: real
+    // test calls literally invented "pickup_date_correct" before this
+    // field existed — see file header comment).
+    scheduled_pickup_date_correct: { type: "boolean", nullable: true },
 
     current_location: { type: "string", nullable: true },
     eta: { type: "string", nullable: true },
@@ -109,35 +181,45 @@ export const RESULT_SCHEMA = {
     human_escalation_required: { type: "boolean", nullable: true },
     escalation_reason: { type: "string", nullable: true },
 
-    // NOT nullable, unlike every other field above — these are the AI's
-    // own assessment of the call, not a caller-stated fact, so "unconfirmed
-    // -> null" doesn't apply. required[] below forces the model to always
-    // include them.
+    // NOT nullable, unlike every other field above — see the extraction
+    // prompt's exception for why.
     confidence_score: { type: "number" },
     call_summary: { type: "string" },
     next_action: { type: "string", nullable: true },
 
-    // Requested by MDR 2026-09-16 — carried forward and echoed back as
-    // CallRequestPayload.open_issue on their next call request.
     open_issue: { type: "string", nullable: true },
 
-    // Internal-only signal, NOT part of MDR's confirmed result contract
-    // (mdr/types.ts's CommonCallResult) — never forwarded to MDR. Exists
-    // solely so classifyEventType() in callOutcome.ts can tell CALL_DROPPED
-    // apart from CALL_COMPLETED: Vapi's endedReason is "customer-ended-call"
-    // for BOTH "caller hung up because done" and "call dropped mid-
-    // conversation" — the telephony layer can't distinguish them, only the
-    // conversation content can.
-    call_ended_abruptly: { type: "boolean" },
+    // Folded in 2026-09-28 from the retired CONTACT_UPDATE_REQUEST call
+    // type — see file header comment. FLATTENED 2026-09-28 (were nested
+    // driver/dispatcher: {name, phone, email} objects) after two real test
+    // calls showed the extraction becoming unreliable with this schema's
+    // size/nesting — one call returned invented field names instead of
+    // ours, another returned no structuredData at all. Nested objects are
+    // a well-known LLM structured-output reliability risk; flattening is
+    // the first, lowest-risk fix being tried before considering a bigger
+    // change (e.g. Vapi's newer Structured Outputs API). The OUTBOUND
+    // shape to MDR (mdr/types.ts's CommonCallResult.driver/dispatcher)
+    // is UNCHANGED — still nested ContactInfo objects, since that's the
+    // confirmed external contract; webhookHandlers.ts's buildCommonResult
+    // reconstructs the nested shape from these flat fields.
+    driver_name: { type: "string", nullable: true },
+    driver_phone: { type: "string", nullable: true },
+    driver_email: { type: "string", nullable: true },
+    dispatcher_name: { type: "string", nullable: true },
+    dispatcher_phone: { type: "string", nullable: true },
+    dispatcher_email: { type: "string", nullable: true },
+    contacts_confirmed: { type: "boolean", nullable: true },
   },
   additionalProperties: false,
   required: [
+    "shipment_id",
     "driver_confirmed",
     "driver_assigned",
     "equipment_assigned",
     "pickup_completed",
     "pickup_completed_at",
     "delivery_completed",
+    "scheduled_pickup_date_correct",
     "current_location",
     "eta",
     "delay",
@@ -151,6 +233,32 @@ export const RESULT_SCHEMA = {
     "call_summary",
     "next_action",
     "open_issue",
-    "call_ended_abruptly",
+    "driver_name",
+    "driver_phone",
+    "driver_email",
+    "dispatcher_name",
+    "dispatcher_phone",
+    "dispatcher_email",
+    "contacts_confirmed",
   ],
+} as const;
+
+export const RESULT_SCHEMA = {
+  type: "object",
+  properties: {
+    shipments: {
+      type: "array",
+      items: SHIPMENT_RESULT_ITEM_SCHEMA,
+    },
+    // Internal-only signal, NOT part of MDR's confirmed result contract —
+    // never forwarded to MDR. Whole-call, not per-shipment (see extraction
+    // prompt) — exists solely so classifyEventType() in callOutcome.ts can
+    // tell CALL_DROPPED/CALL_HANG apart from CALL_COMPLETED: Vapi's
+    // endedReason is "customer-ended-call" for BOTH "caller hung up
+    // because done" and "call dropped mid-conversation" — the telephony
+    // layer can't distinguish them, only the conversation content can.
+    call_ended_abruptly: { type: "boolean" },
+  },
+  additionalProperties: false,
+  required: ["shipments", "call_ended_abruptly"],
 } as const;

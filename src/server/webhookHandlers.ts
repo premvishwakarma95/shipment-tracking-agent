@@ -2,8 +2,15 @@ import { CallRequest, type CallRequestDoc } from "../db/models/CallRequest.js";
 import { classifyEventType } from "./callOutcome.js";
 import { sendVoiceWebhookEvent } from "../mdr/api.js";
 import { sayAndEndCall } from "../vapi/callControl.js";
+import { getCall } from "../vapi/calls.js";
 import { WRONG_NUMBER_MESSAGE } from "../assistant/prompt.js";
-import type { CommonCallResult, ContactInfo, ContactUpdateResult, VoiceWebhookEvent } from "../mdr/types.js";
+import type {
+  CommonCallResult,
+  ContactInfo,
+  PartialShipmentResult,
+  ShipmentResult,
+  VoiceWebhookEvent,
+} from "../mdr/types.js";
 
 // Vapi's inbound webhook message shapes are permissive/`any`-typed here —
 // this is an external contract we don't control the exact fields of, and
@@ -82,6 +89,9 @@ async function applyToolCall(doc: CallRequestDoc, call: VapiToolCall) {
       doc.tool_flags.requested_email = (args.requested_email as string) ?? null;
       return;
     case "flagHumanEscalation":
+      // Call-level only — see mdr/types.ts's CommonCallResult.
+      // human_escalation_required comment for why this isn't merged into
+      // any individual shipment's result.
       doc.tool_flags.human_escalation_required = true;
       doc.tool_flags.escalation_reason = (args.escalation_reason as string) ?? null;
       return;
@@ -105,7 +115,25 @@ export async function handleEndOfCallReport(message: {
     return;
   }
 
-  const structured = message.analysis?.structuredData ?? {};
+  let structured = message.analysis?.structuredData ?? {};
+  // RETRY FALLBACK, added 2026-09-29 — real test calls showed
+  // analysis.structuredData sometimes entirely absent from this webhook
+  // even when the conversation was clean and complete, while a follow-up
+  // GET /call/{id} moments later HAD it. Root-caused as a race: Vapi's
+  // own docs say structured-data analysis "typically completes within a
+  // few seconds" after the call ends, but end-of-call-report fires
+  // immediately at call end — sometimes before that analysis pass
+  // finishes. Investigated migrating to Vapi's newer Structured Outputs
+  // API instead (their docs recommend it over analysisPlan for
+  // reliability) but its own docs are contradictory about persistence/
+  // webhook delivery (one page says results are stored and retrievable,
+  // another says "NOT stored... webhook access only") — too big a risk to
+  // build on blind. This polls the same GET /call/{id} endpoint already
+  // used reliably elsewhere in this codebase instead.
+  if (!hasStructuredShipments(structured)) {
+    const recovered = await pollForStructuredData(message.call.id);
+    if (recovered) structured = recovered;
+  }
   const eventType = classifyEventType(
     message.endedReason,
     doc.tool_flags,
@@ -113,7 +141,29 @@ export async function handleEndOfCallReport(message: {
     message.transcript,
   );
 
-  doc.structured_result = structured;
+  // Split 2026-09-29 per the user's direction — structured_result stores
+  // just the shipments array directly (not wrapped in the raw
+  // { shipments, call_ended_abruptly } object), and call_ended_abruptly
+  // is its own top-level field. FURTHER CHANGED 2026-09-29: built via
+  // buildShipmentResults (the same function used for the actual MDR
+  // payload) rather than the raw Vapi extraction — MDR requires the
+  // nested driver/dispatcher: {name, phone, email} shape (matching
+  // production's original format), but resultSchema.ts's extraction
+  // schema deliberately stays FLAT (driver_name/driver_phone/...) for
+  // extraction reliability (see that file's header comment — nested
+  // objects were a real cause of dropped/failed extractions earlier
+  // today). This keeps that fix intact while still storing the nested
+  // shape internally, by reshaping at storage time instead of reverting
+  // the schema. Each entry's `result` fields are spread directly onto the
+  // shipment object (no `result` wrapper) — that wrapper is specific to
+  // the outbound MDR contract (VoiceWebhookEvent's ShipmentResult), not
+  // wanted in this internal debug copy.
+  doc.structured_result = buildShipmentResults(doc, structured).map(({ shipment_id, status, result }) => ({
+    shipment_id,
+    status,
+    ...result,
+  }));
+  doc.call_ended_abruptly = (structured.call_ended_abruptly as boolean) ?? null;
   doc.event_type = eventType;
   doc.recording_url = message.recordingUrl ?? null;
   doc.transcript = message.transcript ?? null;
@@ -137,13 +187,90 @@ export async function handleEndOfCallReport(message: {
   // see docs/requirements-tracker.md. No retry queue in v1.
 }
 
-// Builds a common result (used for both CALL_COMPLETED.result and
-// CALL_DROPPED.partial_result) from the post-call structured extraction,
-// cross-checked against tool_flags for escalation (see
-// src/assistant/resultSchema.ts for why both signals are combined).
+// True only if `shipments` is present AND non-empty — an empty/missing
+// object (Vapi's failure signature, see handleEndOfCallReport) doesn't
+// count, but neither does a technically-non-empty object missing the one
+// field that actually matters downstream.
+function hasStructuredShipments(structured: Record<string, unknown>): boolean {
+  return Array.isArray(structured.shipments) && structured.shipments.length > 0;
+}
+
+const POLL_MAX_ATTEMPTS = 4;
+const POLL_DELAY_MS = 3000;
+
+async function pollForStructuredData(vapiCallId: string): Promise<Record<string, unknown> | null> {
+  for (let attempt = 1; attempt <= POLL_MAX_ATTEMPTS; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, POLL_DELAY_MS));
+    try {
+      const call = await getCall(vapiCallId);
+      const structured = call.analysis?.structuredData;
+      if (structured && hasStructuredShipments(structured)) {
+        console.log(
+          `[webhookHandlers] recovered structuredData via poll (attempt ${attempt}/${POLL_MAX_ATTEMPTS}) for call ${vapiCallId}`,
+        );
+        return structured;
+      }
+    } catch (err) {
+      console.warn(`[webhookHandlers] poll attempt ${attempt}/${POLL_MAX_ATTEMPTS} for call ${vapiCallId} failed`, err);
+    }
+  }
+  console.warn(
+    `[webhookHandlers] structuredData still missing after ${POLL_MAX_ATTEMPTS} poll attempts for call ${vapiCallId} — giving up`,
+  );
+  return null;
+}
+
+interface ShipmentRecord {
+  shipment_id?: unknown;
+  status?: unknown;
+  [key: string]: unknown;
+}
+
+const NOT_REACHED_SUMMARY = "Not discussed on this call.";
+
+// One entry per shipment MDR sent on the inbound request (doc.shipments is
+// the source of truth for WHICH shipments to report — not the extraction
+// output, so a shipment the call never reached still gets an entry rather
+// than silently vanishing from the response). Each entry's data comes from
+// the matching item in the post-call structured extraction's `shipments[]`
+// array (see resultSchema.ts), matched by shipment_id.
+function buildShipmentResults(
+  doc: CallRequestDoc,
+  structured: Record<string, unknown>,
+): ShipmentResult[] {
+  const inboundShipments = (doc.shipments ?? []) as ShipmentRecord[];
+  const extractedRaw = structured.shipments;
+  const extracted = Array.isArray(extractedRaw) ? (extractedRaw as Record<string, unknown>[]) : [];
+  const byId = new Map(extracted.map((s) => [String(s.shipment_id ?? ""), s]));
+
+  return inboundShipments.map((shipment, index) => {
+    const shipmentId =
+      typeof shipment.shipment_id === "string" && shipment.shipment_id
+        ? shipment.shipment_id
+        : `unknown-${index + 1}`;
+    const match = byId.get(shipmentId);
+    if (!match) {
+      console.warn(
+        `[webhookHandlers] no extraction result for shipment ${shipmentId} on call ${doc.vapi_call_id} — likely not reached before the call ended`,
+      );
+    }
+    return {
+      shipment_id: shipmentId,
+      status: typeof shipment.status === "string" ? shipment.status : null,
+      result: buildCommonResult(match ?? {}, doc.tool_flags, !match),
+    };
+  });
+}
+
+// Builds one shipment's CommonCallResult from its slice of the post-call
+// structured extraction. `notReached` is true when the call ended before
+// this shipment came up at all (no matching extraction entry) — reported
+// as an all-null result with an explanatory call_summary rather than a
+// fabricated one.
 function buildCommonResult(
   structured: Record<string, unknown>,
   toolFlags: CallRequestDoc["tool_flags"],
+  notReached: boolean,
 ): CommonCallResult {
   return {
     driver_confirmed: (structured.driver_confirmed as boolean) ?? null,
@@ -152,6 +279,7 @@ function buildCommonResult(
     pickup_completed: (structured.pickup_completed as boolean) ?? null,
     pickup_completed_at: (structured.pickup_completed_at as string) ?? null,
     delivery_completed: (structured.delivery_completed as boolean) ?? null,
+    scheduled_pickup_date_correct: (structured.scheduled_pickup_date_correct as boolean) ?? null,
 
     current_location: (structured.current_location as string) ?? null,
     eta: (structured.eta as string) ?? null,
@@ -164,69 +292,48 @@ function buildCommonResult(
     appointment_status:
       (structured.appointment_status as CommonCallResult["appointment_status"]) ?? null,
 
-    // Both signals combined: the in-call tool (immediate, LLM-decided) and
-    // the post-call extraction (a backstop in case the tool wasn't called
-    // but the transcript shows an escalation-worthy issue on review).
-    human_escalation_required:
-      Boolean(toolFlags?.human_escalation_required) ||
-      Boolean(structured.human_escalation_required),
-    escalation_reason:
-      (toolFlags?.escalation_reason as string) ?? (structured.escalation_reason as string) ?? null,
+    // Per-shipment escalation comes ONLY from the extraction pass now —
+    // deliberately NOT OR'd with toolFlags.human_escalation_required the
+    // way the old single-shipment code combined the two signals. The
+    // flagHumanEscalation tool is call-level (tools.ts's hard "never
+    // accept an LLM-supplied ID" rule means it can't say WHICH shipment),
+    // so merging it into every shipment's result here would falsely mark
+    // every shipment on the call as escalated when only one actually had
+    // an issue. Confirmed empirically (2026-09-28 multi-shipment
+    // extraction test) that the extraction pass alone reliably attributes
+    // fields to the correct shipment — revisit this if that stops holding
+    // up on real multi-shipment calls. toolFlags.human_escalation_required
+    // is still recorded on CallRequest for internal visibility/audit.
+    human_escalation_required: Boolean(structured.human_escalation_required),
+    escalation_reason: (structured.escalation_reason as string) ?? null,
 
     // Defensive fallback only — resultSchema.ts's `required` list and
     // extraction prompt should already force these two to always be
-    // present. If they're still missing, that's the extraction pass
-    // misbehaving, not a real "unconfirmed" case, so warn loudly rather
-    // than silently sending MDR a fabricated-looking default.
-    confidence_score: valueOrWarnDefault(
-      structured.confidence_score as number | undefined,
-      0,
-      "confidence_score",
-    ),
-    call_summary: valueOrWarnDefault(
-      structured.call_summary as string | undefined,
-      "No summary available.",
-      "call_summary",
-    ),
+    // present for a shipment that WAS reached. If still missing (and the
+    // shipment was reached), that's the extraction pass misbehaving, not a
+    // real "unconfirmed" case, so warn loudly rather than silently sending
+    // MDR a fabricated-looking default.
+    confidence_score: notReached
+      ? 0
+      : valueOrWarnDefault(structured.confidence_score as number | undefined, 0, "confidence_score"),
+    call_summary: notReached
+      ? NOT_REACHED_SUMMARY
+      : valueOrWarnDefault(structured.call_summary as string | undefined, "No summary available.", "call_summary"),
     next_action: (structured.next_action as string) ?? null,
     open_issue: (structured.open_issue as string) ?? null,
-  };
-}
 
-// Builds ContactUpdateResult — the separate result shape used ONLY for
-// CONTACT_UPDATE_REQUEST calls (see mdr/types.ts, contactUpdateResultSchema.ts).
-// Deliberately NOT a case in buildCommonResult — this call type's structured
-// extraction is a different schema entirely, not a superset/subset of
-// CommonCallResult's fields.
-function buildContactUpdateResult(
-  structured: Record<string, unknown>,
-  toolFlags: CallRequestDoc["tool_flags"],
-): ContactUpdateResult {
-  return {
-    driver: toContactInfo(structured.driver),
-    dispatcher: toContactInfo(structured.dispatcher),
+    // FLATTENED 2026-09-28 — resultSchema.ts now extracts flat
+    // driver_name/driver_phone/driver_email fields (not a nested driver
+    // object) to improve extraction reliability; reconstructed into the
+    // nested ContactInfo shape here since that's the unchanged, confirmed
+    // outbound contract to MDR. See resultSchema.ts's file header comment.
+    driver: contactInfoFromFlatFields(structured.driver_name, structured.driver_phone, structured.driver_email),
+    dispatcher: contactInfoFromFlatFields(
+      structured.dispatcher_name,
+      structured.dispatcher_phone,
+      structured.dispatcher_email,
+    ),
     contacts_confirmed: (structured.contacts_confirmed as boolean) ?? null,
-
-    confidence_score: valueOrWarnDefault(
-      structured.confidence_score as number | undefined,
-      0,
-      "confidence_score",
-    ),
-    call_summary: valueOrWarnDefault(
-      structured.call_summary as string | undefined,
-      "No summary available.",
-      "call_summary",
-    ),
-
-    // Same pattern as buildCommonResult — flagHumanEscalation is a generic
-    // tool, available (and equally meaningful) on every call type.
-    human_escalation_required:
-      Boolean(toolFlags?.human_escalation_required) ||
-      Boolean(structured.human_escalation_required),
-    escalation_reason:
-      (toolFlags?.escalation_reason as string) ?? (structured.escalation_reason as string) ?? null,
-    next_action: (structured.next_action as string) ?? null,
-    open_issue: (structured.open_issue as string) ?? null,
   };
 }
 
@@ -239,18 +346,20 @@ function buildContactUpdateResult(
 // MDR even if the extraction's judgment is wrong some other time).
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-function toContactInfo(value: unknown): ContactInfo | null {
-  if (!value || typeof value !== "object") return null;
-  const v = value as Record<string, unknown>;
-  const email = (v.email as string) ?? null;
-  if (email && !EMAIL_PATTERN.test(email)) {
-    console.warn(`[webhookHandlers] extraction returned malformed email "${email}" — dropping to null`);
+// Reconstructs a nested ContactInfo from resultSchema.ts's flat
+// driver_*/dispatcher_* extraction fields — null (not an all-null object)
+// when nothing at all was captured, same semantics the old nested-object
+// version had.
+function contactInfoFromFlatFields(name: unknown, phone: unknown, email: unknown): ContactInfo | null {
+  const n = typeof name === "string" && name ? name : null;
+  const p = typeof phone === "string" && phone ? phone : null;
+  let e = typeof email === "string" && email ? email : null;
+  if (e && !EMAIL_PATTERN.test(e)) {
+    console.warn(`[webhookHandlers] extraction returned malformed email "${e}" — dropping to null`);
+    e = null;
   }
-  return {
-    name: (v.name as string) ?? null,
-    phone: (v.phone as string) ?? null,
-    email: email && EMAIL_PATTERN.test(email) ? email : null,
-  };
+  if (!n && !p && !e) return null;
+  return { name: n, phone: p, email: e };
 }
 
 function valueOrWarnDefault<T>(value: T | undefined | null, fallback: T, field: string): T {
@@ -259,6 +368,18 @@ function valueOrWarnDefault<T>(value: T | undefined | null, fallback: T, field: 
     return fallback;
   }
   return value;
+}
+
+// Whole-call summary for CALL_DROPPED/CALL_HANG — joins whichever
+// shipments actually got discussed. ASSUMPTION, not confirmed by MDR: the
+// old single-shipment code had one natural call_summary; there's no worked
+// multi-shipment example for a dropped/hung call yet. Flag in
+// docs/requirements-tracker.md; revisit once MDR gives a real example.
+function summarizePartialShipments(shipments: PartialShipmentResult[]): string | null {
+  const summaries = shipments
+    .map((s) => s.result.call_summary)
+    .filter((summary): summary is string => Boolean(summary) && summary !== NOT_REACHED_SUMMARY);
+  return summaries.length > 0 ? summaries.join(" ") : null;
 }
 
 function buildWebhookEvent(
@@ -280,16 +401,13 @@ function buildWebhookEvent(
     // in callOutcome.ts is where that distinction is actually decided).
     case "CALL_DROPPED":
     case "CALL_HANG": {
-      const result =
-        doc.call_type === "CONTACT_UPDATE_REQUEST"
-          ? buildContactUpdateResult(structured, doc.tool_flags)
-          : buildCommonResult(structured, doc.tool_flags);
+      const shipments = buildShipmentResults(doc, structured) as PartialShipmentResult[];
       return {
         event_type: eventType,
         mdr_call_id: doc.mdr_call_id,
         voice_call_id: voiceCallId,
-        partial_result: result,
-        call_summary: result.call_summary,
+        shipments,
+        call_summary: summarizePartialShipments(shipments),
       };
     }
 
@@ -314,25 +432,13 @@ function buildWebhookEvent(
       };
 
     case "CALL_COMPLETED":
-      if (doc.call_type === "CONTACT_UPDATE_REQUEST") {
-        return {
-          event_type: "CALL_COMPLETED",
-          mdr_call_id: doc.mdr_call_id,
-          voice_call_id: voiceCallId,
-          call_type: "CONTACT_UPDATE_REQUEST",
-          call_status: "COMPLETED",
-          result: buildContactUpdateResult(structured, doc.tool_flags),
-          recording_url: doc.recording_url ?? null,
-          transcript: doc.transcript ?? null,
-        };
-      }
       return {
         event_type: "CALL_COMPLETED",
         mdr_call_id: doc.mdr_call_id,
         voice_call_id: voiceCallId,
         call_type: doc.call_type,
         call_status: "COMPLETED",
-        result: buildCommonResult(structured, doc.tool_flags),
+        shipments: buildShipmentResults(doc, structured),
         recording_url: doc.recording_url ?? null,
         transcript: doc.transcript ?? null,
       };

@@ -3,7 +3,6 @@ import { CallRequest } from "../db/models/CallRequest.js";
 import { RawCapture } from "../db/models/RawCapture.js";
 import { createOutboundCall } from "../vapi/calls.js";
 import { buildCallVariables } from "./callVariables.js";
-import { CONTACT_UPDATE_ANALYSIS_PLAN } from "../assistant/contactUpdateResultSchema.js";
 import type { CallRequestPayload } from "../mdr/types.js";
 
 export const mdrCallRequestRouter = Router();
@@ -26,9 +25,15 @@ mdrCallRequestRouter.post("/call-requests", async (req, res) => {
   }
 
   const body = req.body as Partial<CallRequestPayload>;
-  if (!body?.mdr_call_id || !body.call_type || !body.contact || !body.shipment) {
+  if (
+    !body?.mdr_call_id ||
+    !body.call_type ||
+    !body.contact ||
+    !Array.isArray(body.shipments) ||
+    body.shipments.length === 0
+  ) {
     res.status(400).json({
-      error: "missing required fields: mdr_call_id, call_type, contact, shipment",
+      error: "missing required fields: mdr_call_id, call_type, contact, shipments (non-empty array)",
     });
     return;
   }
@@ -37,12 +42,11 @@ mdrCallRequestRouter.post("/call-requests", async (req, res) => {
   try {
     callRequestDoc = await CallRequest.create({
       mdr_call_id: body.mdr_call_id,
+      // Stored/echoed only — never validated or branched on, see
+      // mdr/types.ts's CallRequestPayload.call_type comment.
       call_type: body.call_type,
       contact: body.contact,
-      shipment: body.shipment,
-      questions: body.questions ?? [],
-      previous_summary: body.previous_summary ?? null,
-      open_issue: body.open_issue ?? null,
+      shipments: body.shipments,
     });
   } catch (err: unknown) {
     // Duplicate mdr_call_id = MDR retried a request we already accepted.
@@ -67,12 +71,6 @@ mdrCallRequestRouter.post("/call-requests", async (req, res) => {
       assistantId: requireEnv("VAPI_ASSISTANT_ID"),
       customerNumber: callRequestDoc.contact.phone,
       variableValues,
-      // CONTACT_UPDATE_REQUEST uses its own structured-data extraction
-      // (nested driver/dispatcher shape) instead of the assistant's
-      // default — see contactUpdateResultSchema.ts.
-      ...(callRequestDoc.call_type === "CONTACT_UPDATE_REQUEST"
-        ? { analysisPlan: CONTACT_UPDATE_ANALYSIS_PLAN }
-        : {}),
     });
 
     callRequestDoc.vapi_call_id = call.id;

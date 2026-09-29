@@ -156,6 +156,21 @@ const assistantConfig = {
         { role: "system", content: RESULT_EXTRACTION_PROMPT },
         { role: "user", content: "Call transcript:\n\n{{transcript}}" },
       ],
+      // Added 2026-09-29 after TEST-MULTISHIP-018 (5 shipments in one
+      // call) came back with analysis.structuredData completely absent —
+      // confirmed via direct GET /call/{id} well after call end, so this
+      // wasn't the earlier race-condition case pollForStructuredData
+      // handles. analysis.summary/successEvaluation (much shorter
+      // completions) succeeded fine on the same call, which points at the
+      // structured-data completion itself (5 shipments x 27 required
+      // fields = a much bigger JSON output than any earlier 2-3-shipment
+      // test call) exceeding structuredDataPlan's default timeoutSeconds
+      // and getting dropped. No timeoutSeconds was ever set before this —
+      // Vapi's own docs recommend raising it when extraction times out.
+      // Not yet retested against a real 4-5-shipment call — verify before
+      // trusting this fully; see CLAUDE.md's extraction-reliability
+      // section.
+      timeoutSeconds: 30,
     },
   },
   server: {

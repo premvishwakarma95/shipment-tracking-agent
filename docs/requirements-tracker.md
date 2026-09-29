@@ -6,24 +6,37 @@ project's docs did.
 
 ## OPEN — needs an answer from MDR before this can go live
 
-1. **`EMAIL_REQUESTED` has no event_type in the confirmed webhook event
+1. **Multi-shipment `CALL_DROPPED`/`CALL_HANG` shape is an assumption.**
+   The confirmed `shipments[]` example is for `CALL_COMPLETED` only — there
+   is no worked example of what MDR wants when a multi-shipment call gets
+   cut off partway through. Currently `webhookHandlers.ts` mirrors
+   `CALL_COMPLETED`'s per-shipment shape (one entry per shipment MDR sent,
+   unreached ones as `call_summary: "Not discussed on this call."`).
+   Confirm with MDR.
+2. **Per-shipment `human_escalation_required` has no reliable mid-call
+   attribution.** The `flagHumanEscalation` tool is call-level (can't say
+   which shipment), so as of 2026-09-28 only the post-call extraction pass
+   determines this per shipment — the old dual-source (tool + extraction)
+   design no longer applies per-shipment. Revisit if real calls show the
+   extraction missing something the tool would have caught.
+3. **`EMAIL_REQUESTED` has no event_type in the confirmed webhook event
    list** (NO_ANSWER/VOICEMAIL/BUSY/CALL_FAILED/CALL_DROPPED/
    CALLBACK_REQUESTED/WRONG_CONTACT/CALL_COMPLETED only). We still capture
    it internally (`tool_flags.email_requested`/`requested_email`) but don't
    send it as its own event yet. Ask MDR whether it needs one, or whether
    folding it into a `CALL_COMPLETED` summary is sufficient.
-2. **`VOICEMAIL`/`BUSY`/`CALL_FAILED` payload shape is assumed identical to
+4. **`VOICEMAIL`/`BUSY`/`CALL_FAILED` payload shape is assumed identical to
    the `NO_ANSWER` example** (minimal `{event_type, mdr_call_id,
    voice_call_id}`) — the guide only shows a worked example for
    `NO_ANSWER`. Confirm the other three match.
-3. **`next_action` in the `CALL_COMPLETED` result** is named in the guide's
+5. **`next_action` in the `CALL_COMPLETED` result** is named in the guide's
    prose (§7, "structured AI results such as ... summary and next action")
    but absent from the one worked JSON example. Confirm whether to keep it.
-4. **Retry policy** if a push to MDR fails. Currently: log and leave
+6. **Retry policy** if a push to MDR fails. Currently: log and leave
    `mdr_pushed_at` null for manual reconciliation, no automatic retry.
-5. **Voicemail message copy** — currently a generic short message; confirm
+7. **Voicemail message copy** — currently a generic short message; confirm
    final approved copy.
-6. **`questions[]` — is it a fixed/pre-defined set or free text?** MDR asked
+8. **`questions[]` — is it a fixed/pre-defined set or free text?** MDR asked
    whether custom questions are mandatory (no — optional, defaults to `[]`)
    and whether more can be added (yes, no cap, handled as a priority list
    in addition to call-type defaults). Flagged back to MDR: for reliable
@@ -34,8 +47,10 @@ project's docs did.
 
 ## CONFIRMED (from "MDR Agent 3 – Voice API Integration Guide")
 
-- MDR sends exactly one contact + one shipment per call request; Voice API
-  never selects an alternate number or the next contact.
+- MDR sends exactly one contact per call request; Voice API never selects
+  an alternate number or the next contact. UPDATED 2026-09-28: MDR now
+  sends `shipments[]` (an array, sometimes length 1) per call request
+  instead of one shipment — see CLAUDE.md's "Multi-shipment calls" section.
 - MDR owns all retry/cadence/next-contact/escalation decisions — Voice API
   only reports outcomes.
 - Real webhook URL for pushing results, confirmed directly by the MDR team

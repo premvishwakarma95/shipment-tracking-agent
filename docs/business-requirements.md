@@ -28,17 +28,28 @@ zero every call.
 
 ## Call types
 
-- **OUT_FOR_DELIVERY** — highest-priority default queue. Location, ETA,
-  delay, delivery status, any issue.
-- **PICKUP_TODAY** — ask FIRST whether pickup already happened (MDR may
-  still trigger this call type after pickup, since TAI can lag). If yes:
-  completion time, issues, current movement — do not ask ETA to pickup. If
-  no: driver assigned?, ETA to pickup, appointment confirmed?, any issue?
-- **DISPATCHED** — pickup within the next 5 working days. Driver/equipment
-  assigned?, pickup date/appointment still correct?, any issue?
-- **IN_TRANSIT** — location, ETA, delay, and if delayed, whether it's
-  traffic/weather/mechanical/other (one `issue_type` value, not several
-  booleans).
+UPDATED 2026-09-29 — these are no longer selected by a request-level
+`call_type` (retired along with the old single-shipment format; see
+CLAUDE.md's "Multi-shipment calls" section). Each shipment within a
+`SHIPMENT_GROUP` request now carries its own `status`, matched against
+these same five sets in `src/assistant/prompt.ts`'s `STATUS_QUESTIONS`.
+Content below reflects MDR's 2026-09-29 revised wording (`STATUS_QUESTIONS`
+is the source of truth — keep this digest in sync with it, not the other
+way around):
+
+- **OUT_FOR_DELIVERY** — Where are you now? Current ETA? Any delay? Has
+  delivery happened yet?
+- **PICKUP_TODAY** — Has a driver been assigned? Driver's ETA to pickup?
+  Pickup appointment confirmed? Any delay? (No longer a two-branch
+  "ask whether already picked up first" flow — that was removed
+  2026-09-29 per explicit confirmation this flat list is correct.)
+- **DISPATCHED** — Driver/equipment assigned? Scheduled pickup date still
+  correct? Appointment confirmed? Any delay?
+- **IN_TRANSIT** — Where are you now? Current ETA? Any delay?
+- **CONTACT_UPDATE_REQUEST** — no longer a separate call type (merged into
+  the common `SHIPMENT_GROUP` format, only reachable via a shipment's own
+  `status`). Driver's name/phone/email, dispatcher's name/phone/email
+  (asked one at a time, not bundled), whether these are the best contacts.
 
 ## Escalation
 

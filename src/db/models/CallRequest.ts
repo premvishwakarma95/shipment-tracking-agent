@@ -1,28 +1,12 @@
 import { Schema, model, type InferSchemaType } from "mongoose";
 
-export const CALL_TYPES = [
-  "OUT_FOR_DELIVERY",
-  "PICKUP_TODAY",
-  "DISPATCHED",
-  "IN_TRANSIT",
-  // Added 2026-09-24 per MDR's request — structurally different from the
-  // other four: it collects driver/dispatcher contact info rather than a
-  // shipment status update, so it gets its own result shape
-  // (ContactUpdateResult in mdr/types.ts) and its own Vapi structured-data
-  // extraction schema (src/assistant/contactUpdateResultSchema.ts),
-  // applied per-call via assistantOverrides.analysisPlan — see
-  // mdrCallRequest.ts. Deliberately NOT folded into CommonCallResult; see
-  // CLAUDE.md's "Contact update requests" section for why.
-  "CONTACT_UPDATE_REQUEST",
-] as const;
-
 export const CONTACT_TYPES = [
   "DRIVER",
   "DISPATCHER",
   "SECONDARY_DISPATCHER",
   "CARRIER_MAIN",
   "AFTER_HOURS",
-  // Added 2026-09-24 for CONTACT_UPDATE_REQUEST calls — confirmed spelling
+  // Added 2026-09-24 for contact-update-style calls — confirmed spelling
   // (underscore, no space) by the user 2026-09-24; MDR's own example
   // payload sent "CARRIER REPRESENTATIVE" with a space, which doesn't
   // match this enum's SCREAMING_SNAKE_CASE convention.
@@ -90,6 +74,9 @@ const ToolFlagsSchema = new Schema(
     // No confirmed MDR event_type for this yet — kept for visibility only.
     email_requested: { type: Boolean, default: false },
     requested_email: { type: String, default: null },
+    // Call-level only (never scoped to one shipment) — see mdr/types.ts's
+    // CommonCallResult.human_escalation_required comment for why this
+    // isn't merged into any individual shipment's result.
     human_escalation_required: { type: Boolean, default: false },
     escalation_reason: { type: String, default: null },
   },
@@ -99,27 +86,29 @@ const ToolFlagsSchema = new Schema(
 // Intentionally thin: this model exists only to bridge the async gap
 // between "we told Vapi to dial" and "Vapi's webhooks tell us what
 // happened," a few minutes later. It is NOT a cross-call history store —
-// MDR supplies previous_summary/open_issue on every request instead of
-// Voice API querying its own past attempts (contrast the reference
-// project's callMemory.ts, which had to do that lookup itself).
+// MDR supplies previous_summary/open_issue per shipment on every request
+// instead of Voice API querying its own past attempts (contrast the
+// reference project's callMemory.ts, which had to do that lookup itself).
 const CallRequestSchema = new Schema(
   {
     mdr_call_id: { type: String, required: true, unique: true },
-    call_type: { type: String, enum: CALL_TYPES, required: true },
+    // Deliberately a plain string, NOT an enum. Currently always
+    // "SHIPMENT_GROUP" — MDR has said this value is for their own internal
+    // use and may change, so it's captured/echoed back but never
+    // validated against a fixed set or acted on. See mdr/types.ts's
+    // CallRequestPayload.call_type comment.
+    call_type: { type: String, required: true },
     contact: { type: ContactSchema, required: true },
-    // Permissive on purpose: MDR may send additional TAI shipment/reference
-    // fields beyond the confirmed example. Don't lock this down to a strict
-    // sub-schema.
-    shipment: { type: Schema.Types.Mixed, required: true },
-    // Singular strings per the confirmed integration guide (§9) — NOT the
-    // previous_interactions[]/open_items[] arrays from the earlier informal
-    // spec. Renamed here to match.
-    previous_summary: { type: String, default: null },
-    open_issue: { type: String, default: null },
-    // New in the confirmed contract (§3): MDR now tells us explicitly which
-    // questions it wants answered on this call, in addition to the default
-    // per-call-type set in prompt.ts.
-    questions: { type: [String], default: [] },
+    // CHANGED 2026-09-28: MDR moved from one shipment per call request to
+    // an array of shipments per call (sometimes still just one), so
+    // details for all of them can be collected in a single conversation.
+    // Each entry stays Schema.Types.Mixed, permissive on purpose — MDR may
+    // send additional TAI shipment/reference fields beyond the confirmed
+    // example (shipment_id, status, pickup_date,
+    // estimated_delivery_date, delivery_appointment, carrier_name,
+    // questions[], previous_summary, open_issue). Don't lock this down to
+    // a strict sub-schema.
+    shipments: { type: [Schema.Types.Mixed], required: true },
 
     vapi_call_id: { type: String, index: true, sparse: true },
     // Live Call Control URL for this specific call (docs.vapi.ai/calls/
@@ -135,10 +124,27 @@ const CallRequestSchema = new Schema(
     // Set mid-call, as soon as the LLM calls the corresponding tool.
     tool_flags: { type: ToolFlagsSchema, default: () => ({}) },
 
-    // Raw output of Vapi's post-call structured-data extraction
-    // (see src/assistant/resultSchema.ts), kept unparsed alongside the
-    // assembled event actually sent to MDR.
+    // Per-shipment results array — an array directly, not wrapped in a
+    // `{ shipments: [...] }` object (RESTRUCTURED 2026-09-29 per the
+    // user's direction; call_ended_abruptly is its own top-level field
+    // below instead of nested in here). NOT the raw Vapi extraction
+    // output anymore as of the same day — each entry is
+    // `{ shipment_id, status, ...resultFields }` (result fields spread
+    // directly, no `result` wrapper — that wrapper is specific to the
+    // outbound MDR contract, VoiceWebhookEvent's ShipmentResult, not
+    // wanted here), built from webhookHandlers.ts's buildShipmentResults,
+    // the SAME function used for the actual outbound MDR payload, so the
+    // field VALUES mirror that exactly (nested driver/dispatcher: {name,
+    // phone, email}, matching MDR's required contract) rather than
+    // resultSchema.ts's flat extraction shape (driver_name/driver_phone/
+    // ... — kept flat there on purpose, for extraction reliability; see
+    // that file's header comment).
     structured_result: { type: Schema.Types.Mixed, default: null },
+    // Whole-call signal (not per-shipment, see resultSchema.ts's extraction
+    // prompt) used by classifyEventType() in callOutcome.ts — pulled out to
+    // its own top-level field 2026-09-29 so it's directly queryable instead
+    // of nested inside structured_result.
+    call_ended_abruptly: { type: Boolean, default: null },
 
     event_type: { type: String, enum: EVENT_TYPES, default: null },
     recording_url: { type: String, default: null },

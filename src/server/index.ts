@@ -32,7 +32,16 @@ app.post("/vapi/tool-calls", async (req, res) => {
         return;
       }
       case "end-of-call-report":
-        await handleEndOfCallReport(message);
+        // Ack immediately, then process in the background — added
+        // 2026-09-29 alongside webhookHandlers.ts's structuredData retry
+        // poll (up to ~12s of added latency in the worst case). Awaiting
+        // the full handler here risked Vapi's own webhook delivery timing
+        // out and retrying (which the mdr_pushed_at idempotency guard
+        // would handle safely, but needlessly). Errors are caught and
+        // logged here since nothing awaits this promise.
+        handleEndOfCallReport(message).catch((err) => {
+          console.error("[vapi/tool-calls] end-of-call-report handling failed", err);
+        });
         res.status(200).json({ received: true });
         return;
       default:
