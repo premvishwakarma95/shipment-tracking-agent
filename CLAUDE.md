@@ -253,7 +253,9 @@ general shape.
   space, which doesn't match this enum's `SCREAMING_SNAKE_CASE` convention
   and will fail validation. MDR needs to send the underscore version; flag
   this if a real request comes in with the space variant and gets
-  rejected.
+  rejected. UPDATED 2026-10-06: it is now rejected with an immediate `400`
+  that lists the accepted values (it used to hang, see "MDR multi-shipment
+  feedback changes").
 - MDR's `communication: "voice"` field on the inbound payload is
   deliberately ignored — confirmed by the user as MDR-internal reference
   only, not something to validate or branch on.
@@ -382,6 +384,122 @@ general shape.
   further or reconsider whether a single call should realistically cover
   that many shipments at all.
 
+## MDR multi-shipment feedback changes (2026-10-06)
+
+A batch of fixes from MDR's testing of the multi-shipment flow, done one at
+a time and each verified on real calls (local server + `npm run
+assistant:create`). Where each lives, so the next person doesn't undo it:
+
+- **Single-shipment wording.** With exactly one shipment the agent asks
+  questions directly — no "First"/"Second"/"next", no "for a different
+  shipment", no shipment ID. `callVariables.ts`'s `shipmentWordingRule`
+  fills `{{shipment_wording_rule}}` in `prompt.ts` (it overrides the
+  multi-shipment "say the ID once" rule). Because the ID is no longer
+  spoken, the extraction pass returns `shipment_id: ""` for that call —
+  `webhookHandlers.ts`'s `buildShipmentResults` pairs the lone extracted
+  entry with the lone inbound shipment directly instead of reporting it as
+  "not reached" (regression found and fixed 2026-10-06). Multi-shipment
+  calls still match by `shipment_id`.
+- **Never re-ask what was already answered** (general rule in
+  `prompt.ts`, plus an inline condition on OUT_FOR_DELIVERY's "Has delivery
+  happened yet?", which is asked ONLY if the caller hasn't given an ETA,
+  mentioned a delay, or said it was delivered — an inline condition is
+  followed far more reliably than the general rule alone). A stated delivery
+  ETA with no "already delivered" means `delivery_completed: false`
+  (extraction rule, confirmed by the user). Unclear/garbled/partial
+  answers are re-asked ONCE, then accepted as unknown; an ETA with only a
+  day or something vague ("tomorrow", "soon") gets one "What time would
+  that be?". The agent must never call `endCall` mid-question or before
+  every shipment is covered (a real multi-shipment call was cut off after
+  "Tomorrow" because it called `endCall` in the same turn as a question).
+- **Delay cause.** After "yes" to a delay the agent asks "...traffic,
+  weather, a mechanical problem, or something else?" for EVERY status
+  (general rule). Extraction: `delay_reason` = the caller's words,
+  `issue_type` = exactly one of `traffic`/`weather`/`mechanical`/`other`.
+  MDR's 09-28 shorter lists had silently dropped this question; it was
+  restored. Only the cause is asked, not the duration (`delay_minutes`
+  fills only if volunteered).
+- **`null` unless actually asked/stated.** The extraction model kept
+  filling `delay`, `delivery_completed`/`pickup_completed` with `false`
+  for things never discussed; explicit rules in `resultSchema.ts` now
+  force `null`. `false` means the caller said no.
+- **Contact-type awareness.** `callVariables.ts`'s `describeContact` passes
+  who is on the call into the system prompt (`{{contact_context}}`) and the
+  extraction prompt (`{{contact_summary_note}}`, so `call_summary` says
+  "the dispatcher said the driver..."). `DISPATCHER` and
+  `SECONDARY_DISPATCHER` get `DISPATCHER_STATUS_QUESTIONS` (third-person
+  "Where is the driver currently?" / "What is the driver's current ETA?" /
+  "Is there any delay with the delivery?") for OUT_FOR_DELIVERY and
+  IN_TRANSIT; every other contact type (`DRIVER`, `CARRIER_MAIN`,
+  `AFTER_HOURS`, `CARRIER_REPRESENTATIVE`) gets the normal wording.
+  PICKUP_TODAY/DISPATCHED already speak about "a driver" in the third
+  person. **Don't put the contact's NAME in the extraction note** — it was
+  copied into `dispatcher_name`, fabricating a captured dispatcher.
+- **Timestamps: `YYYY-MM-DD HH:MM:SS`, 24-hour, UTC** for `eta`,
+  `pickup_completed_at` and the new `delivery_completed_at`
+  (`src/server/timeFormat.ts`). Each call gets `{{call_start_utc}}`
+  (`callVariables.ts`) so the extraction can resolve "in 2 hours" (call
+  time + 2h), "5 PM" (today), "tomorrow 3 PM", "an hour ago" (past, for
+  completed-at fields); vague answers are `null`. `normalizeMdrTimestamp`
+  re-validates in code — anything not matching the exact format (or not a
+  real date) is sent as `null`, never as free text. **Known, accepted
+  limitation (user's decision):** a spoken clock time is treated AS UTC
+  with no timezone conversion, since the contact's timezone isn't known —
+  e.g. a caller in India saying "2 PM" produces `14:00:00` UTC, which can
+  even be later than the call itself.
+- **`delivery_completed_at`.** When the caller says it's delivered, the
+  agent asks once "What date and time was it delivered?" (skipped if
+  already given; a vague answer gets one follow-up). Only set when
+  `delivery_completed` is true. Delivery times go ONLY in this field — the
+  extraction once put one in `pickup_completed_at`; schema descriptions
+  and an explicit warning in `resultSchema.ts` guard against that.
+- **DISPATCHED / PICKUP_TODAY driver flow** (`prompt.ts`'s
+  `DRIVER_ASSIGNED_FOLLOW_UP`, spliced into both lists): "Has a driver been
+  assigned?" -> no: continue; yes: "Is the driver contact information
+  updated?" -> yes: don't ask name/phone; no: ask the driver's name, then
+  phone (read back to confirm, no email). Maps to `driver_assigned`;
+  `driver_confirmed` (true = contact info is current, false = it isn't,
+  `null` = no driver assigned / not asked); `driver: {name, phone,
+  email: null}` (the existing nested shape, no new flat fields).
+  PICKUP_TODAY skips "What is the driver's ETA to pickup?" when no driver
+  is assigned. Delay wording now matches MDR's lists ("...with the
+  shipment?" / "...with the pickup?").
+- **Phone numbers carry a country code** (`src/server/phoneFormat.ts`,
+  applied to driver and dispatcher phones): 10 digits -> `+1`; an explicit
+  `+` keeps its own code; 11-15 digits with no `+` are treated as already
+  including a country code; a `+1` number that isn't exactly 11 digits, or
+  anything too short/long, becomes `null`. The extraction writes digits
+  exactly as spoken and must NOT add `+1` itself (it once turned a
+  spoken 91... number into an invalid `+191...`).
+- **`POST /mdr/call-requests` robustness** (`mdrCallRequest.ts`). Express 4
+  doesn't forward a rejected async handler to the error middleware, so an
+  invalid `contact.type` (e.g. `"CARRIER"` or `"CARRIER REPRESENTATIVE"`
+  with a space) used to leave the request with NO response — MDR saw a
+  timeout. Now: `contact.type` must be an exact `CONTACT_TYPES` value and
+  `contact.name`/`contact.phone` are required, else an immediate `400
+  {error: "invalid contact", details, allowed_contact_types}`; the handler
+  is wrapped so any other failure returns `400` (Mongoose validation) or
+  `500` instead of hanging. `CARRIER` stays rejected (user's decision).
+- **Response time.** The `RawCapture` write now starts first but overlaps
+  the other work (awaited just before every response, never rejects), and
+  each successful request logs `[mdrCallRequest] <id> timings ms:
+  db_create=… vapi_create_call=… db_save=… total=…`. Measured: our own
+  work is small; Vapi's create-call (0.4-1.5s) and network distance
+  dominate. The final `save()` is deliberately still awaited before the
+  ack (the Vapi call ID must be stored before webhooks arrive).
+- **Voice latency / opening.** Per-reply latency on real calls is ~1.4-2.5s
+  (model ~0.55-0.7s, `eleven_v3` voice ~0.6-1.0s with spikes to ~2s,
+  transcriber/endpointing ~0.1-0.7s). **The voice model stays
+  `eleven_v3`** (user's decision — a flash/turbo model would cut ~0.5s but
+  changes how the agent sounds). The opening "Hello." script is unchanged
+  and works as MDR specified; with `assistant-speaks-first` anything the
+  caller says in the first ~1-2s before the agent's "Hello." is ignored
+  (switching to `assistant-waits-for-user` was considered, NOT done — it
+  would drop the "Hello." script MDR asked for). The introduction was
+  shortened to exactly two sentences (saves only ~1s).
+- **Closing pause: no change needed.** A natural ~1-2s pause already
+  exists before hang-up; a `[long pause]` tag was tried and reverted.
+
 ## Wrong number vs. wrong contact (both via reportWrongContact)
 
 One tool, two outcomes, distinguished by whether a referral was given —
@@ -454,3 +572,23 @@ handles both the message and the hangup.
   of the LLM signal: if the transcript has zero content, force
   `CALL_DROPPED` regardless of what `call_ended_abruptly` says. Don't
   revert to trusting the extraction alone for this case.
+- **A normal call can be reported `CALL_HANG` if the first word of the
+  closing line is clipped.** `classifyEventType` looks for the first
+  sentence of `END_CALL_MESSAGE` ("Thank you for your time and the
+  information") in the transcript; a real call transcribed it as "You for
+  your time..." and was misclassified. Not fixed (needs the user's
+  approval) — a looser match such as "for your time and the information"
+  would cover it. The clipped first word itself looks like a voice
+  (`eleven_v3`) quirk.
+- **A call cut short after the closing line still reads `CALL_COMPLETED`.**
+  The completion check is only "closing line present in the transcript",
+  not "every shipment's questions were covered".
+- **Escalation on an unclear answer.** A garbled but important answer
+  (e.g. the driver's location) can set `human_escalation_required: true`
+  via MDR's own "cannot confidently understand an important answer" rule.
+  Left as MDR's rule.
+- **Spoken times are treated as UTC** (see the timestamp bullet above).
+- **Manual test pass still pending for:** `IN_TRANSIT`,
+  `CONTACT_UPDATE_REQUEST`, `SECONDARY_DISPATCHER` and the non-driver
+  contact types, and the PICKUP_TODAY/multi-shipment driver-flow branches
+  (see `docs/test-cases.md`).

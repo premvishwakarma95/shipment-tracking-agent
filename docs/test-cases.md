@@ -236,6 +236,52 @@ across every call type, not just re-verify DISPATCHED/IN_TRANSIT.
   TEST-011: TypeError: fetch failed` (DNS failure on the placeholder host),
   logged cleanly, `mdr_pushed_at` stayed null, server kept running.
 
+## MDR multi-shipment feedback (2026-10-06)
+
+Use a new `mdr_call_id` per call. `[x]` = verified on a real call
+2026-10-06, `[ ]` = still to run.
+
+- [x] **TC-FB-01 single shipment wording** — one shipment, any status: no
+  "First"/"Second", no shipment ID spoken.
+- [x] **TC-FB-02 delay cause** — answer "yes" to delay: agent offers
+  traffic/weather/mechanical/other; `delay_reason` and `issue_type`
+  (`traffic`) filled.
+- [x] **TC-FB-03 ETA given -> no "has delivery happened?"** —
+  `delivery_completed: false`.
+- [x] **TC-FB-04 "already delivered"** — agent asks date/time, no ETA
+  question; `delivery_completed: true`, `delivery_completed_at` filled
+  ("2 PM", "an hour ago", "yesterday 4 PM"); a vague "earlier" gets one
+  follow-up.
+- [x] **TC-FB-05 ETA format** — "4 PM" -> today `16:00:00`, "in 2 hours" ->
+  call time + 2h, "tomorrow 1 PM" -> next day `13:00:00`; day-only
+  ("tomorrow") makes the agent ask for a time.
+- [x] **TC-FB-06 dispatcher wording** — `DISPATCHER` contact: third-person
+  driver questions, `call_summary` says "the dispatcher".
+- [x] **TC-FB-07 DISPATCHED, no driver** — skips the contact questions;
+  `driver_assigned: false`, `driver_confirmed: null`, `driver: null`.
+- [x] **TC-FB-08 DISPATCHED, driver assigned + contact updated** —
+  `driver_confirmed: true`, `driver: null`.
+- [x] **TC-FB-09 DISPATCHED, contact NOT updated** — name then phone,
+  read-back; `driver_confirmed: false`, `driver.phone` `+1...`.
+- [ ] **TC-FB-10 PICKUP_TODAY, no driver** — ETA question skipped (the fix
+  was made after the last real call, so this still needs a re-run; the
+  rest of the flow was verified).
+- [x] **TC-FB-11 invalid `contact.type`** (`CARRIER`, `CARRIER
+  REPRESENTATIVE`) / missing name or phone — immediate `400` with the
+  allowed list, no hang.
+- [ ] **TC-FB-12 phone with country code** (`+91 98765 43210` ->
+  `+919876543210`) and **garbled phone** (-> `driver.phone: null`).
+- [ ] **TC-FB-13 PICKUP_TODAY, driver assigned** — contact updated, and not
+  updated (name + phone); ETA "in 2 hours" format.
+- [ ] **TC-FB-14 multi-shipment driver flow** — DISPATCHED + PICKUP_TODAY in
+  one call, each shipment follows its own branch.
+- [ ] **TC-FB-15 IN_TRANSIT** (driver and dispatcher), **CONTACT_UPDATE_REQUEST**,
+  `SECONDARY_DISPATCHER`, and `CARRIER_MAIN`/`AFTER_HOURS`/
+  `CARRIER_REPRESENTATIVE` contacts.
+- [ ] **TC-FB-16 `delay`/`delivery_completed` stay `null`** when never
+  asked (e.g. a `DISPATCHED` call), and `dispatcher` is `null` when no
+  dispatcher details were collected.
+
 ## Known gaps (don't re-file)
 
 - No automated test suite yet — all of the above are manual/curl-driven.

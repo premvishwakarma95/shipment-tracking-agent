@@ -86,6 +86,10 @@ export interface CommonCallResult {
   pickup_completed: boolean | null;
   pickup_completed_at: string | null;
   delivery_completed: boolean | null;
+  // Added 2026-10-06 — when delivery happened, "YYYY-MM-DD HH:MM:SS" in UTC
+  // (same format as eta/pickup_completed_at, see server/timeFormat.ts).
+  // Null unless delivery_completed is true and a time was given.
+  delivery_completed_at: string | null;
   // Added 2026-09-29 — DISPATCHED's "Is the scheduled pickup date still
   // correct?" question had no matching field until now (see
   // resultSchema.ts's header comment for the invented-field-name issue

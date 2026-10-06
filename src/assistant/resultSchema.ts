@@ -58,6 +58,36 @@ into one entry, even if their questions/answers looked similar (e.g. two
 shipments both "in transit"). Each entry's shipment_id must match exactly
 the ID used for that shipment during the call.
 
+FIELD MIX-UP WARNING: a time the caller gives for when DELIVERY happened
+(even an uncertain or relative one like "about an hour ago") goes ONLY in
+delivery_completed_at. pickup_completed_at is exclusively for a pickup the
+caller said was completed — if pickup was never discussed it MUST be null.
+
+TIMESTAMP FORMAT — applies to eta, pickup_completed_at and delivery_completed_at: write it in
+exactly this format, 24-hour, zero-padded, always UTC: YYYY-MM-DD HH:MM:SS
+(example: 2026-10-06 14:30:00). Nothing else — no "T", no "Z", no AM/PM, no
+timezone text. The call took place at: {{call_start_utc}}. Resolve what
+the caller said against that moment:
+- A relative time ("in 2 hours", "in 30 minutes") -> that call time plus
+  that amount.
+- A clock time with no day ("5 PM", "2:30 PM") -> that time on the call's
+  date. Treat the spoken time as UTC; do not convert timezones.
+- A day plus a time ("tomorrow 3 PM", "Friday at 10 AM") -> that calendar
+  date (worked out from the call date above) at that time.
+- A time in the past for pickup_completed_at/delivery_completed_at ("an hour ago", "2 hours ago", "this morning at 9", "yesterday 4 PM") -> the matching earlier moment, worked out from the call time and date above.
+- Vague or incomplete answers ("soon", "later", "this afternoon", a day
+  with no time, an unclear fragment) -> null. Never guess a time.
+
+WHO WAS ON THE CALL: {{contact_summary_note}} This is context for call_summary wording ONLY — the person's own details are NOT captured contact information. Fill driver_*/dispatcher_* fields only from details the caller actually stated in answer to a question asking for them; otherwise leave them null.
+
+SINGLE-SHIPMENT CALLS: when a call covers just one shipment, the agent
+deliberately does NOT say its shipment ID aloud, so no ID will appear in
+the transcript. That is normal — still produce exactly ONE entry
+describing the conversation, with shipment_id set to an empty string "".
+Never return an empty "shipments" array just because no ID was spoken, as
+long as the conversation actually discussed a shipment's status, location,
+ETA, delay or delivery.
+
 For every field within a shipment's entry: extract only what the caller
 explicitly stated for THAT shipment during this call. Use null for
 anything not clearly confirmed for that specific shipment — never infer,
@@ -71,13 +101,18 @@ ONLY for genuinely unclear, unanswered, or not-discussed items, never for
 something the caller plainly confirmed or denied. Common mappings, so
 there's no ambiguity about where a clear answer belongs:
 - "Has a driver been assigned?" -> Yes/No -> driver_assigned: true/false
+- "Is the driver contact information updated?" -> Yes -> driver_confirmed: true; No -> driver_confirmed: false. If no driver was assigned (or the question was never asked), driver_confirmed MUST be null.
+- When the caller gave a driver's name and phone number because the contact information was NOT updated -> driver_name / driver_phone. driver_phone is written EXACTLY as the digits the caller gave (and read back), e.g. "555 123 4567" — include a leading "+" and country code ONLY if the caller actually said one (e.g. "+91 98765 43210"). Do NOT add a country code yourself, and never prefix "+1": a country code is added afterwards by the system. Leave driver_email null (email is not asked in this flow).
 - "Has the required equipment been assigned?" -> Yes/No -> equipment_assigned: true/false
 - "Is the scheduled pickup date still correct?" -> Yes/No -> scheduled_pickup_date_correct: true/false
 - "Is the appointment confirmed?" -> Yes -> appointment_status: "CONFIRMED"; a clear No/not yet -> "NOT_CONFIRMED"
-- "Is there any delay?" -> Yes/No -> delay: true/false (and delay_reason/delay_minutes/issue_type if given)
-- "Has delivery/pickup happened yet?" -> Yes/No -> delivery_completed / pickup_completed: true/false
+- "Is there any delay?" -> Yes/No -> delay: true/false (and delay_reason/delay_minutes/issue_type if given). If delay was NEVER asked about or mentioned for that shipment (e.g. it was already delivered, or the call ended first), delay MUST be null — not false. "No delay" is only recorded when the caller actually said so; never infer it from the shipment being delivered or on time.
+- A stated cause of a delay -> delay_reason: (the caller's own words) AND issue_type: exactly one of "traffic", "weather", "mechanical", "other" (the single closest category, never several)
+- "Has delivery/pickup happened yet?" -> Yes/No -> delivery_completed / pickup_completed: true/false. If that was NEVER asked or stated for a shipment (e.g. a dispatched shipment, where pickup/delivery was not discussed), delivery_completed and pickup_completed MUST be null — never false, never inferred from the shipment's status.
+- A stated time of delivery ("delivered at 2 PM", "an hour ago", "yesterday 4 PM") -> delivery_completed_at (timestamp format below); only when delivery_completed is true, otherwise null
 - "Where are you now?" / current location stated -> current_location: (the location)
-- "What is your current ETA?" / an ETA stated -> eta: (the ETA)
+- "What is your current ETA?" / an ETA stated -> eta: (the ETA, in the exact timestamp format described under "TIMESTAMP FORMAT" below — never free text like "5 PM")
+- An ETA for delivery stated, and the caller never said it was already delivered -> delivery_completed: false (an ETA means it has not been delivered yet)
 If a shipment's entry has several fields left null while its own
 call_summary casually states the answers in prose, that is a sign fields
 were missed — re-check the transcript for that shipment before finalizing.
@@ -155,8 +190,19 @@ const SHIPMENT_RESULT_ITEM_SCHEMA = {
     equipment_assigned: { type: "boolean", nullable: true },
 
     pickup_completed: { type: "boolean", nullable: true },
-    pickup_completed_at: { type: "string", nullable: true },
+    pickup_completed_at: {
+      type: "string",
+      nullable: true,
+      description:
+        "When PICKUP was completed, as YYYY-MM-DD HH:MM:SS UTC. Only when the caller said pickup was completed. NEVER put a delivery time here — delivery times go in delivery_completed_at.",
+    },
     delivery_completed: { type: "boolean", nullable: true },
+    delivery_completed_at: {
+      type: "string",
+      nullable: true,
+      description:
+        "When DELIVERY was completed, as YYYY-MM-DD HH:MM:SS UTC. Only when delivery_completed is true and the caller gave a time. This is the ONLY field for a delivery time.",
+    },
     // Added 2026-09-29 — DISPATCHED's "Is the scheduled pickup date still
     // correct?" question had no matching field, so this answer either got
     // dropped or the model invented a field name for it (confirmed: real
@@ -218,6 +264,7 @@ const SHIPMENT_RESULT_ITEM_SCHEMA = {
     "equipment_assigned",
     "pickup_completed",
     "pickup_completed_at",
+    "delivery_completed_at",
     "delivery_completed",
     "scheduled_pickup_date_correct",
     "current_location",

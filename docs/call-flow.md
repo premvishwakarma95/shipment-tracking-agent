@@ -2,9 +2,9 @@
 
 ```mermaid
 flowchart TD
-    A[MDR: POST /mdr/call-requests] --> B[Raw-capture payload]
-    B --> C{Validate required fields}
-    C -- missing --> C1[400]
+    A[MDR: POST /mdr/call-requests] --> B[Raw-capture payload, runs in parallel]
+    B --> C{Validate required fields + contact.type/name/phone}
+    C -- missing or invalid contact --> C1["400 (lists allowed contact types)"]
     C -- duplicate mdr_call_id --> C2["202 success:true, status:QUEUED already"]
     C -- ok --> D[Create CallRequest]
     D --> E[Build call variables]
@@ -28,7 +28,7 @@ flowchart TD
 
 ## Webhook event shapes (NOT one universal envelope)
 
-MDR's webhook (`POST https://api.mydrayrate.com/api/v1/agent3/voice/webhook`)
+MDR's webhook (`POST https://staging.mydrayrate.com/api/voice/check-call-completed`)
 takes a different payload per `event_type` — see `src/mdr/types.ts`'s
 `VoiceWebhookEvent`:
 
@@ -44,6 +44,10 @@ UPDATED 2026-09-28: MDR now sends `shipments[]` (not one `shipment`) per
 call request — see CLAUDE.md's "Multi-shipment calls" section for the full
 change (question-set selection by shipment `status`, per-shipment
 extraction, retired `CONTACT_UPDATE_REQUEST`).
+
+UPDATED 2026-10-06: see CLAUDE.md's "MDR multi-shipment feedback changes".
+Anything unexpected inside `POST /mdr/call-requests` now returns a 400/500
+instead of leaving the request hanging.
 
 ## Node-to-spec cross reference
 

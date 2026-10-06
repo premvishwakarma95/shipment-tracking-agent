@@ -1,5 +1,6 @@
 import type { CallRequestDoc } from "../db/models/CallRequest.js";
-import { STATUS_QUESTIONS, DEFAULT_STATUS_QUESTIONS } from "../assistant/prompt.js";
+import { describeUtcNow } from "./timeFormat.js";
+import { STATUS_QUESTIONS, DISPATCHER_STATUS_QUESTIONS, DEFAULT_STATUS_QUESTIONS } from "../assistant/prompt.js";
 
 // Maps a CallRequest into the flat object of every {{variable}} referenced
 // in src/assistant/prompt.ts, passed as assistantOverrides.variableValues
@@ -15,11 +16,29 @@ import { STATUS_QUESTIONS, DEFAULT_STATUS_QUESTIONS } from "../assistant/prompt.
 // message, which can't reasonably itemize per-shipment detail.
 export function buildCallVariables(doc: CallRequestDoc): Record<string, string> {
   const shipments = (doc.shipments ?? []) as ShipmentLike[];
+  const contact = describeContact(doc.contact);
 
   return {
+    call_start_utc: describeUtcNow(new Date()),
+    contact_context: contact.promptContext,
+    contact_summary_note: contact.summaryNote,
     shipment_ids_text: shipments.map((s, i) => shipmentId(s, i)).join(", "),
-    shipments_block: shipments.map((s, i) => renderShipmentBlock(s, i)).join("\n\n"),
+    shipments_block: shipments.map((s, i) => renderShipmentBlock(s, i, contact.isDispatcher)).join("\n\n"),
+    shipment_wording_rule: shipmentWordingRule(shipments.length),
   };
+}
+
+// Added 2026-10-06 after MDR feedback: with a single shipment the agent
+// said "First, can you tell me where you are now?" — ordinal/transition
+// wording only makes sense when there's more than one shipment. Rendered
+// as a variable (not static prompt text) so the single-shipment case can
+// explicitly override the multi-shipment "say its shipment ID once"
+// instruction above it.
+function shipmentWordingRule(count: number): string {
+  if (count === 1) {
+    return `This call covers exactly ONE shipment. Ask its questions directly, one at a time. Do NOT use ordinal or sequencing words such as "first", "second", "next", "then" or "finally" to introduce a question, do NOT say "for a different shipment", and do NOT say the shipment ID — it overrides the instruction above to say the ID. Just ask, e.g. "Where are you now?" or "What is your current ETA?".`;
+  }
+  return `This call covers ${count} shipments. Use sequencing words such as "first", "second" or "next" only to move between shipments, never between questions within the same shipment.`;
 }
 
 interface ShipmentLike {
@@ -37,7 +56,7 @@ function shipmentId(shipment: ShipmentLike, index: number): string {
     : `unknown-${index + 1}`;
 }
 
-function renderShipmentBlock(shipment: ShipmentLike, index: number): string {
+function renderShipmentBlock(shipment: ShipmentLike, index: number, isDispatcher: boolean): string {
   const id = shipmentId(shipment, index);
   const status = typeof shipment.status === "string" ? shipment.status.trim() : "";
 
@@ -64,7 +83,7 @@ Questions MDR specifically wants answered for this shipment:
 ${mdrQuestions}
 
 Default questions for this shipment's status:
-${questionsForStatusKey(statusKey)}
+${questionsForStatusKey(statusKey, isDispatcher)}
 `.trim();
 }
 
@@ -121,10 +140,56 @@ function resolveStatusKey(status: string): keyof typeof STATUS_QUESTIONS | null 
   return null;
 }
 
-function questionsForStatusKey(key: keyof typeof STATUS_QUESTIONS | null): string {
+function questionsForStatusKey(key: keyof typeof STATUS_QUESTIONS | null, isDispatcher: boolean): string {
   if (!key) {
     console.warn("[callVariables] shipment status didn't match any known question set — using default");
     return DEFAULT_STATUS_QUESTIONS;
   }
+  if (isDispatcher && key in DISPATCHER_STATUS_QUESTIONS) {
+    return DISPATCHER_STATUS_QUESTIONS[key];
+  }
   return STATUS_QUESTIONS[key];
+}
+
+// The summaryNote deliberately omits the contact's NAME: when it included
+// it, the extraction pass copied it into dispatcher_name even though no
+// contact details were ever collected (confirmed 2026-10-06,
+// LOCAL-DISPATCHED-TEST-015: dispatcher {name: "Test Dispatcher"} appeared
+// in the result on a call that never asked for it).
+//
+// Added 2026-10-06 per MDR feedback: the model was never told who it was
+// talking to, so a dispatcher's call could be summarized as "the driver
+// confirmed ...". DISPATCHER and SECONDARY_DISPATCHER get the dispatcher
+// question wording (DISPATCHER_STATUS_QUESTIONS); every other contact type
+// (DRIVER, CARRIER_MAIN, AFTER_HOURS, CARRIER_REPRESENTATIVE) gets the
+// default driver-facing wording — confirmed with the user 2026-10-06.
+function describeContact(contact: CallRequestDoc["contact"] | undefined): {
+  isDispatcher: boolean;
+  promptContext: string;
+  summaryNote: string;
+} {
+  const type = contact?.type ?? "";
+  const name = contact?.name?.trim() || "the contact";
+  const isDispatcher = type === "DISPATCHER" || type === "SECONDARY_DISPATCHER";
+
+  const role = (
+    {
+      DRIVER: "driver",
+      DISPATCHER: "dispatcher",
+      SECONDARY_DISPATCHER: "dispatcher",
+      CARRIER_MAIN: "carrier representative",
+      CARRIER_REPRESENTATIVE: "carrier representative",
+      AFTER_HOURS: "after-hours contact",
+    } as Record<string, string>
+  )[type] ?? "contact";
+
+  const promptContext = isDispatcher
+    ? `You are speaking with ${name}, the ${role} — NOT the driver. Whenever you ask about the driver (location, ETA, delay, delivery), refer to "the driver" in the third person; "you" always means the ${role}.`
+    : `You are speaking with ${name}, the ${role}. "You" in the questions below refers to them.`;
+
+  const summaryNote = isDispatcher
+    ? `The person on this call is the ${role} — NOT the driver. In every call_summary, attribute what they said to "the ${role}" (e.g. "The ${role} said the driver is ..."), and never call them "the driver".`
+    : `The person on this call is the ${role}. In every call_summary, attribute what they said to "the ${role}", not to a different role.`;
+
+  return { isDispatcher, promptContext, summaryNote };
 }

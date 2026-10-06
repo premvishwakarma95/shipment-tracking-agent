@@ -16,15 +16,16 @@ retries on its own, never auto-dials a referred number, and never
 self-schedules a callback — all of that is MDR's decision.
 
 API = MDR calls Voice Team (`POST /mdr/call-requests`).
-Webhook = Voice Team calls MDR (`POST https://api.mydrayrate.com/api/v1/agent3/voice/webhook`).
+Webhook = Voice Team calls MDR (`POST https://staging.mydrayrate.com/api/voice/check-call-completed`, Bearer auth, confirmed by MDR 2026-09-16).
 
 ## What MDR sends per call
 
 One contact (type: DRIVER / DISPATCHER / SECONDARY_DISPATCHER /
-CARRIER_MAIN / AFTER_HOURS), one shipment's details, a call type, an
-explicit `questions[]` list of what it wants asked this call, and
-`previous_summary`/`open_issue` — prior context to avoid starting from
-zero every call.
+CARRIER_MAIN / AFTER_HOURS / CARRIER_REPRESENTATIVE — exact values, anything
+else is rejected with a 400) and a `shipments[]` array (one or more
+shipments for that contact). Each shipment carries its own `status`,
+`questions[]` list of what MDR wants asked, and `previous_summary`/
+`open_issue` — prior context to avoid starting from zero every call.
 
 ## Call types
 
@@ -37,15 +38,26 @@ Content below reflects MDR's 2026-09-29 revised wording (`STATUS_QUESTIONS`
 is the source of truth — keep this digest in sync with it, not the other
 way around):
 
-- **OUT_FOR_DELIVERY** — Where are you now? Current ETA? Any delay? Has
-  delivery happened yet?
-- **PICKUP_TODAY** — Has a driver been assigned? Driver's ETA to pickup?
-  Pickup appointment confirmed? Any delay? (No longer a two-branch
-  "ask whether already picked up first" flow — that was removed
-  2026-09-29 per explicit confirmation this flat list is correct.)
-- **DISPATCHED** — Driver/equipment assigned? Scheduled pickup date still
-  correct? Appointment confirmed? Any delay?
-- **IN_TRANSIT** — Where are you now? Current ETA? Any delay?
+- **OUT_FOR_DELIVERY** — Where are you now? Current ETA? Any delay (if yes,
+  the cause: traffic / weather / mechanical / other)? Has delivery happened
+  yet — asked only if no ETA/delay/"delivered" was already given; if
+  delivered, what date and time.
+- **PICKUP_TODAY** — Has a driver been assigned? If yes: is the driver
+  contact information updated? (if not, driver name and phone). Driver's
+  ETA to pickup (skipped when no driver is assigned). Pickup appointment
+  confirmed? Any delay with the pickup?
+- **DISPATCHED** — Has a driver been assigned? If yes: is the driver
+  contact information updated? (if not, driver name and phone). Equipment
+  assigned? Scheduled pickup date still correct? Appointment confirmed? Any
+  delay with the shipment?
+- **IN_TRANSIT** — Where are you now? Current ETA? Any delay (and its
+  cause)?
+- **Dispatcher contacts** (`DISPATCHER`, `SECONDARY_DISPATCHER`) are asked
+  about the driver in the third person for OUT_FOR_DELIVERY and IN_TRANSIT
+  ("Where is the driver currently?", "What is the driver's current ETA?",
+  "Is there any delay with the delivery?", "Has delivery happened yet?").
+  Every other contact type gets the wording above. `call_summary` names the
+  actual person on the call.
 - **CONTACT_UPDATE_REQUEST** — no longer a separate call type (merged into
   the common `SHIPMENT_GROUP` format, only reachable via a shipment's own
   `status`). Driver's name/phone/email, dispatcher's name/phone/email
@@ -77,9 +89,10 @@ If one of these applies: `human_escalation_required: true` and
 If none apply (the normal case): `human_escalation_required: false`,
 `escalation_reason: null`. A routine delay or a "not sure yet" answer is
 NOT on its own grounds for escalation. Implemented via two combined
-signals — the `flagHumanEscalation` tool (mid-call, immediate) and the
-post-call structured-data extraction (a backstop) — see the "Tool calls
-vs. post-call extraction" section of `CLAUDE.md`.
+signals — the `flagHumanEscalation` tool (mid-call, recorded for audit)
+and the post-call structured-data extraction (the source of the
+per-shipment value MDR receives) — see the "Tool calls vs. post-call
+extraction" section of `CLAUDE.md`.
 
 ## Hard rules
 
@@ -90,3 +103,16 @@ context to avoid re-asking answered questions, and clearly flag when a
 previously-reported value has changed. Voice API calls only the one number
 supplied; if unreachable, report `NO_ANSWER` and stop. MDR decides what
 happens next in every case.
+
+## Response formats (confirmed by MDR, 2026-10-06)
+
+- `eta`, `pickup_completed_at` and `delivery_completed_at`:
+  `YYYY-MM-DD HH:MM:SS` (24-hour), UTC. Relative answers ("in 2 hours") are
+  added to the call time; "5 PM" / "tomorrow 3 PM" become full timestamps;
+  vague answers are `null`. A spoken clock time is taken as UTC (no
+  timezone conversion).
+- `driver: {name, phone, email}` — phone always with a country code, `+1`
+  assumed when none is given.
+- `driver_confirmed`: `true` = driver contact info is up to date, `false` =
+  it isn't, `null` = no driver assigned / not asked.
+- A field that was never asked about or stated is `null`, never `false`.

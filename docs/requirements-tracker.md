@@ -45,6 +45,32 @@ project's docs did.
    questions outside the fixed result schema only land in `call_summary`,
    not as their own structured field. Awaiting MDR's list.
 
+9. **Spoken times are treated as UTC.** A caller saying "2 PM" is stored as
+   `14:00:00` UTC with no timezone conversion, because the contact's
+   timezone isn't known (decision 2026-10-06). A caller in another timezone
+   can produce a time that is later than the call itself. Ask MDR whether
+   they can send a timezone per contact if this matters.
+10. **`CARRIER` / `"CARRIER REPRESENTATIVE"` as `contact.type`.** MDR has
+    sent both; neither is accepted (the value is `CARRIER_REPRESENTATIVE`,
+    with an underscore). Rejected with a clear 400 listing the accepted
+    values. Confirm MDR will send the exact values.
+
+## CONFIRMED 2026-10-06 (MDR feedback on multi-shipment calls)
+
+- Timestamps `eta`/`pickup_completed_at`/`delivery_completed_at` use
+  `YYYY-MM-DD HH:MM:SS` in UTC; "in 2 hours" adds to the call time.
+- New `delivery_completed_at`; the agent asks for the delivery date and
+  time when the shipment is already delivered.
+- DISPATCHED/PICKUP_TODAY: after "driver assigned?", ask whether the driver
+  contact information is updated; if not, collect the driver's name and
+  phone (answer stored in `driver_confirmed`, contact in `driver`). Phone
+  numbers carry a country code, `+1` by default.
+- Dispatcher contacts (`DISPATCHER`, `SECONDARY_DISPATCHER`) are asked about
+  the driver in the third person; other contact types use the driver
+  wording.
+- No "First"/"Second" wording and no shipment ID when a call covers one
+  shipment; already-answered questions are not re-asked.
+
 ## CONFIRMED (from "MDR Agent 3 – Voice API Integration Guide")
 
 - MDR sends exactly one contact per call request; Voice API never selects

@@ -1,5 +1,7 @@
 import { CallRequest, type CallRequestDoc } from "../db/models/CallRequest.js";
 import { classifyEventType } from "./callOutcome.js";
+import { normalizeMdrTimestamp } from "./timeFormat.js";
+import { normalizePhoneE164 } from "./phoneFormat.js";
 import { sendVoiceWebhookEvent } from "../mdr/api.js";
 import { sayAndEndCall } from "../vapi/callControl.js";
 import { getCall } from "../vapi/calls.js";
@@ -248,7 +250,15 @@ function buildShipmentResults(
       typeof shipment.shipment_id === "string" && shipment.shipment_id
         ? shipment.shipment_id
         : `unknown-${index + 1}`;
-    const match = byId.get(shipmentId);
+    // Single-shipment calls don't speak the shipment ID aloud (see
+    // callVariables.ts's shipmentWordingRule), so the extraction pass has
+    // no ID to attribute its entry to and returns shipment_id empty — with
+    // exactly one inbound shipment and one extracted entry there's nothing
+    // to disambiguate, so pair them directly instead of reporting the
+    // shipment as "not reached" (confirmed 2026-10-06, LOCAL-DRIVER-001).
+    const match =
+      byId.get(shipmentId) ??
+      (inboundShipments.length === 1 && extracted.length === 1 ? extracted[0] : undefined);
     if (!match) {
       console.warn(
         `[webhookHandlers] no extraction result for shipment ${shipmentId} on call ${doc.vapi_call_id} — likely not reached before the call ended`,
@@ -277,12 +287,13 @@ function buildCommonResult(
     driver_assigned: (structured.driver_assigned as boolean) ?? null,
     equipment_assigned: (structured.equipment_assigned as boolean) ?? null,
     pickup_completed: (structured.pickup_completed as boolean) ?? null,
-    pickup_completed_at: (structured.pickup_completed_at as string) ?? null,
+    pickup_completed_at: normalizeMdrTimestamp(structured.pickup_completed_at, "pickup_completed_at"),
     delivery_completed: (structured.delivery_completed as boolean) ?? null,
+    delivery_completed_at: normalizeMdrTimestamp(structured.delivery_completed_at, "delivery_completed_at"),
     scheduled_pickup_date_correct: (structured.scheduled_pickup_date_correct as boolean) ?? null,
 
     current_location: (structured.current_location as string) ?? null,
-    eta: (structured.eta as string) ?? null,
+    eta: normalizeMdrTimestamp(structured.eta, "eta"),
 
     delay: (structured.delay as boolean) ?? null,
     delay_minutes: (structured.delay_minutes as number) ?? null,
@@ -352,7 +363,12 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // version had.
 function contactInfoFromFlatFields(name: unknown, phone: unknown, email: unknown): ContactInfo | null {
   const n = typeof name === "string" && name ? name : null;
-  const p = typeof phone === "string" && phone ? phone : null;
+  // Country code always included (+1 default) — see phoneFormat.ts.
+  const rawPhone = typeof phone === "string" && phone ? phone : null;
+  const p = normalizePhoneE164(rawPhone);
+  if (rawPhone && !p) {
+    console.warn(`[webhookHandlers] extraction returned unusable phone "${rawPhone}" — dropping to null`);
+  }
   let e = typeof email === "string" && email ? email : null;
   if (e && !EMAIL_PATTERN.test(e)) {
     console.warn(`[webhookHandlers] extraction returned malformed email "${e}" — dropping to null`);

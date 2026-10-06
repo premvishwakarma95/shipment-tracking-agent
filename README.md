@@ -46,12 +46,17 @@ Required before the server can do anything useful:
 2. This service places the call via Vapi and responds `202` immediately.
 3. Once the call ends, Vapi's webhooks land on `POST /vapi/tool-calls`; the result is assembled and pushed back to MDR.
 
-Five call types: `OUT_FOR_DELIVERY`, `PICKUP_TODAY`, `DISPATCHED`,
-`IN_TRANSIT` share one common result shape (`CommonCallResult`).
-`CONTACT_UPDATE_REQUEST` (collects driver/dispatcher contact info instead
-of a shipment status) is the one deliberate exception — its own result
-shape and its own Vapi structured-data extraction, applied per-call. See
-CLAUDE.md's "Contact update requests" section before touching either.
+One call can cover several shipments (`shipments[]`, `call_type` is
+`SHIPMENT_GROUP`). Each shipment's own `status` (`OUT_FOR_DELIVERY`,
+`PICKUP_TODAY`, `DISPATCHED`, `IN_TRANSIT`, or `CONTACT_UPDATE_REQUEST`)
+picks its question set, and every shipment returns the same result shape
+(`CommonCallResult`). `eta`, `pickup_completed_at` and
+`delivery_completed_at` are `YYYY-MM-DD HH:MM:SS` in UTC; phone numbers in
+`driver`/`dispatcher` carry a country code. `contact.type` must be one of
+`DRIVER`, `DISPATCHER`, `SECONDARY_DISPATCHER`, `CARRIER_MAIN`,
+`AFTER_HOURS`, `CARRIER_REPRESENTATIVE` — anything else gets an immediate
+`400`. See CLAUDE.md's "Multi-shipment calls" and "MDR multi-shipment
+feedback changes" sections.
 
 See [docs/call-flow.md](./docs/call-flow.md) for the full diagram and
 [docs/test-cases.md](./docs/test-cases.md) for manual QA scenarios.
