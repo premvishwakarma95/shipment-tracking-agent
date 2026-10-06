@@ -111,9 +111,14 @@ This shipment is out for delivery today. Ask:
 - Where are you now?
 - What is your current ETA?
 - Is there any delay?
-- Has delivery happened yet? (ask this ONLY if the caller has not already
-  given an ETA, mentioned a delay, or said it was delivered — otherwise
-  skip it completely). If yes: "What date and time was it delivered?"
+- Has delivery happened yet? — SKIP THIS QUESTION ENTIRELY if the caller
+  has given an ETA at any point in this conversation (even if you have
+  since asked about a delay or its cause), has mentioned a delay, or has
+  said it was delivered: an ETA or a delay means it has not arrived yet.
+  After the delay question (and the cause, if there was a delay), this
+  shipment is DONE — do not circle back to this question. Ask it ONLY if
+  no ETA was given (e.g. the caller didn't know the ETA). If they say yes:
+  "What date and time was it delivered?"
 `.trim(),
 
   // CHANGED 2026-09-29 — the old two-branch version ("ask FIRST whether
@@ -180,10 +185,14 @@ dispatcher, not the driver, so ask about the driver in the third person:
 - Where is the driver currently?
 - What is the driver's current ETA?
 - Is there any delay with the delivery?
-- Has delivery happened yet? (ask this ONLY if the dispatcher has not
-  already given an ETA, mentioned a delay, or said it was delivered —
-  otherwise skip it completely). If yes: "What date and time was it
-  delivered?"
+- Has delivery happened yet? — SKIP THIS QUESTION ENTIRELY if the
+  dispatcher has given an ETA at any point in this conversation (even if
+  you have since asked about a delay or its cause), has mentioned a delay,
+  or has said it was delivered: an ETA or a delay means it has not arrived
+  yet. After the delay question (and the cause, if there was a delay),
+  this shipment is DONE — do not circle back to this question. Ask it ONLY
+  if no ETA was given (e.g. they didn't know the ETA). If they say yes:
+  "What date and time was it delivered?"
 `.trim(),
 
   IN_TRANSIT: `
@@ -373,7 +382,8 @@ before moving on, offering the common causes, e.g. "Can you tell me what is
 causing the delay? Is it traffic, weather, a mechanical problem, or
 something else?" (this fills delay_reason and issue_type). Skip that
 question if they already gave the reason. If they say there is no delay,
-move straight on.
+move straight on. Once the delay cause is answered, do NOT go back to ask
+"Has delivery happened yet?" — a delay means the shipment has not arrived.
 
 For each shipment, use its own "Previous summary" and "Open issue" (shown
 above) instead of asking a cold open-ended question about something MDR
