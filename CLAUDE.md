@@ -440,7 +440,22 @@ assistant:create`). Where each lives, so the next person doesn't undo it:
   (`src/server/timeFormat.ts`). Each call gets `{{call_start_utc}}`
   (`callVariables.ts`) so the extraction can resolve "in 2 hours" (call
   time + 2h), "5 PM" (today), "tomorrow 3 PM", "an hour ago" (past, for
-  completed-at fields); vague answers are `null`. `normalizeMdrTimestamp`
+  completed-at fields); vague answers are `null`. **ETA is computed in CODE, not by the extraction model
+  (2026-10-08, MDR feedback):** the model only classifies what the caller
+  said (`eta_kind`: `explicit` / `late` / `same` / `from_now` /
+  `clock_time`, plus `eta_offset_minutes` / `eta_clock_time`; `eta` itself
+  only for `explicit`), and `src/server/etaCalc.ts`'s `computeEta` builds
+  the timestamp: explicit date+time as stated; "N hours late" = the
+  shipment's scheduled delivery (`estimated_delivery_date` +
+  `delivery_appointment`, `timeFormat.ts`'s `parseScheduledDelivery`) plus
+  the delay, or call time + delay when there is no usable schedule; "same
+  as before"/"on time" = the scheduled time (`null` if none); "in N hours"
+  = call start + N; a bare clock time ("5 PM") = that time on the scheduled
+  DATE, else the call's date. A scheduled date earlier than the call date
+  is stale and ignored. "Call time" is Vapi's `startedAt`. This replaced a
+  prompt-only version in which the model, even when handed the schedule,
+  answered "2 hours late" with call time + 2h. The agent accepts "2 hours
+  late"/"same as before" as a complete ETA answer. `normalizeMdrTimestamp`
   re-validates in code — anything not matching the exact format (or not a
   real date) is sent as `null`, never as free text. **Known, accepted
   limitation (user's decision):** a spoken clock time is treated AS UTC

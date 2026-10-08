@@ -17,9 +17,10 @@ import { STATUS_QUESTIONS, DISPATCHER_STATUS_QUESTIONS, DEFAULT_STATUS_QUESTIONS
 export function buildCallVariables(doc: CallRequestDoc): Record<string, string> {
   const shipments = (doc.shipments ?? []) as ShipmentLike[];
   const contact = describeContact(doc.contact);
+  const now = new Date();
 
   return {
-    call_start_utc: describeUtcNow(new Date()),
+    call_start_utc: describeUtcNow(now),
     contact_context: contact.promptContext,
     contact_summary_note: contact.summaryNote,
     shipment_ids_text: shipments.map((s, i) => shipmentId(s, i)).join(", "),
@@ -71,10 +72,14 @@ function renderShipmentBlock(shipment: ShipmentLike, index: number, isDispatcher
       : "None.";
 
   const mdrQuestions = renderMdrQuestions(shipment.questions);
+  const details = renderShipmentDetails(shipment, status);
   const statusKey = resolveStatusKey(status);
 
   return `
 ## Shipment ${index + 1}: ${id}${status ? ` — status: ${status}` : ""}
+
+Shipment details (share ONLY if the caller asks about them):
+${details}
 
 Previous summary: ${previousSummary}
 Open issue to reconfirm: ${openIssue}
@@ -85,6 +90,25 @@ ${mdrQuestions}
 Default questions for this shipment's status:
 ${questionsForStatusKey(statusKey, isDispatcher)}
 `.trim();
+}
+
+// Plain facts from the call request that a caller may ask about mid-call
+// ("what's the pickup date?"). Only fields MDR actually sent are listed.
+const DETAIL_FIELDS: Array<[string, string]> = [
+  ["pickup_date", "Scheduled pickup date"],
+  ["estimated_delivery_date", "Estimated delivery date"],
+  ["delivery_appointment", "Delivery appointment time"],
+  ["carrier_name", "Carrier"],
+];
+
+function renderShipmentDetails(shipment: ShipmentLike, status: string): string {
+  const lines: string[] = [];
+  if (status) lines.push(`- Status: ${status.replace(/_/g, " ").toLowerCase()}`);
+  for (const [key, label] of DETAIL_FIELDS) {
+    const v = shipment[key];
+    if (typeof v === "string" && v.trim()) lines.push(`- ${label}: ${v.trim()}`);
+  }
+  return lines.length ? lines.join("\n") : "- (no extra details were provided)";
 }
 
 function renderMdrQuestions(questions: unknown): string {

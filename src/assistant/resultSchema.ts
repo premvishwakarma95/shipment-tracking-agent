@@ -63,20 +63,37 @@ FIELD MIX-UP WARNING: a time the caller gives for when DELIVERY happened
 delivery_completed_at. pickup_completed_at is exclusively for a pickup the
 caller said was completed — if pickup was never discussed it MUST be null.
 
-TIMESTAMP FORMAT — applies to eta, pickup_completed_at and delivery_completed_at: write it in
+TIMESTAMP FORMAT — applies to eta (when explicit), pickup_completed_at and delivery_completed_at: write it in
 exactly this format, 24-hour, zero-padded, always UTC: YYYY-MM-DD HH:MM:SS
 (example: 2026-10-06 14:30:00). Nothing else — no "T", no "Z", no AM/PM, no
-timezone text. The call took place at: {{call_start_utc}}. Resolve what
-the caller said against that moment:
-- A relative time ("in 2 hours", "in 30 minutes") -> that call time plus
-  that amount.
-- A clock time with no day ("5 PM", "2:30 PM") -> that time on the call's
-  date. Treat the spoken time as UTC; do not convert timezones.
-- A day plus a time ("tomorrow 3 PM", "Friday at 10 AM") -> that calendar
-  date (worked out from the call date above) at that time.
-- A time in the past for pickup_completed_at/delivery_completed_at ("an hour ago", "2 hours ago", "this morning at 9", "yesterday 4 PM") -> the matching earlier moment, worked out from the call time and date above.
-- Vague or incomplete answers ("soon", "later", "this afternoon", a day
-  with no time, an unclear fragment) -> null. Never guess a time.
+timezone text. The call took place at: {{call_start_utc}}.
+
+ETA FIELDS — do NOT work out the final ETA yourself. The system computes it
+from what you report. For each shipment, classify what the caller said about
+the ETA with eta_kind and fill ONLY the matching value field(s); leave the
+others null:
+- "explicit": the caller gave a specific date AND time ("tomorrow 3 PM",
+  "October 10 at 2 PM"). Set eta to that date and time in the TIMESTAMP
+  FORMAT above ("tomorrow", "Friday" etc. are worked out from the call date).
+- "late": the caller said how late or delayed it is ("2 hours late", "30
+  minutes behind", "delayed by 3 hours"). Set eta_offset_minutes to the total
+  delay in minutes (2 hours late = 120). NOT the same as "in 2 hours".
+- "same": the caller said it is unchanged ("same as before", "on time", "as
+  scheduled", "no change").
+- "from_now": a time relative to NOW ("in 2 hours", "in 30 minutes"). Set
+  eta_offset_minutes to that amount in minutes.
+- "clock_time": only a time of day with no date ("5 PM", "2:30 PM"). Set
+  eta_clock_time to that time in 24-hour HH:MM ("17:00", "14:30"). Do not
+  guess a date.
+- null: no ETA was given, or the answer was vague ("soon", "later", "this
+  afternoon", a day with no time, an unclear fragment). Never guess.
+Set eta (the full timestamp) ONLY for "explicit"; for every other kind eta
+MUST be null.
+
+For pickup_completed_at / delivery_completed_at only: a time in the past
+("an hour ago", "2 hours ago", "this morning at 9", "yesterday 4 PM") -> the
+matching earlier moment, worked out from the call time and date above; a
+vague answer -> null.
 
 WHO WAS ON THE CALL: {{contact_summary_note}} This is context for call_summary wording ONLY — the person's own details are NOT captured contact information. Fill driver_*/dispatcher_* fields only from details the caller actually stated in answer to a question asking for them; otherwise leave them null.
 
@@ -106,12 +123,12 @@ there's no ambiguity about where a clear answer belongs:
 - "Has the required equipment been assigned?" -> Yes/No -> equipment_assigned: true/false
 - "Is the scheduled pickup date still correct?" -> Yes/No -> scheduled_pickup_date_correct: true/false
 - "Is the appointment confirmed?" -> Yes -> appointment_status: "CONFIRMED"; a clear No/not yet -> "NOT_CONFIRMED"
-- "Is there any delay?" -> Yes/No -> delay: true/false (and delay_reason/delay_minutes/issue_type if given). If delay was NEVER asked about or mentioned for that shipment (e.g. it was already delivered, or the call ended first), delay MUST be null — not false. "No delay" is only recorded when the caller actually said so; never infer it from the shipment being delivered or on time.
+- "Is there any delay?" -> Yes/No -> delay: true/false (and delay_reason/delay_minutes/issue_type if given). If the caller said the ETA is "on time" / "as scheduled" -> delay: false; if they only said "same as before" / "unchanged" without mentioning delay, leave delay null (it was not asked). If delay was NEVER asked about or mentioned for that shipment (e.g. it was already delivered, or the call ended first), delay MUST be null — not false. "No delay" is only recorded when the caller actually said so; never infer it from the shipment being delivered or on time.
 - A stated cause of a delay -> delay_reason: (the caller's own words) AND issue_type: exactly one of "traffic", "weather", "mechanical", "other" (the single closest category, never several)
 - "Has delivery/pickup happened yet?" -> Yes/No -> delivery_completed / pickup_completed: true/false. If that was NEVER asked or stated for a shipment (e.g. a dispatched shipment, where pickup/delivery was not discussed), delivery_completed and pickup_completed MUST be null — never false, never inferred from the shipment's status.
 - A stated time of delivery ("delivered at 2 PM", "an hour ago", "yesterday 4 PM") -> delivery_completed_at (timestamp format below); only when delivery_completed is true, otherwise null
 - "Where are you now?" / current location stated -> current_location: (the location)
-- "What is your current ETA?" / an ETA stated -> eta: (the ETA, in the exact timestamp format described under "TIMESTAMP FORMAT" below — never free text like "5 PM")
+- "What is your current ETA?" / an ETA stated -> classify it with eta_kind and fill the matching value (see "ETA FIELDS" below) — never put free text like "5 PM" in eta
 - An ETA for delivery stated, and the caller never said it was already delivered -> delivery_completed: false (an ETA means it has not been delivered yet)
 If a shipment's entry has several fields left null while its own
 call_summary casually states the answers in prose, that is a sign fields
@@ -211,7 +228,28 @@ const SHIPMENT_RESULT_ITEM_SCHEMA = {
     scheduled_pickup_date_correct: { type: "boolean", nullable: true },
 
     current_location: { type: "string", nullable: true },
-    eta: { type: "string", nullable: true },
+    eta: {
+      type: "string",
+      nullable: true,
+      description:
+        "Full timestamp YYYY-MM-DD HH:MM:SS UTC, ONLY when eta_kind is explicit; otherwise null.",
+    },
+    eta_kind: {
+      type: "string",
+      nullable: true,
+      description:
+        "How the caller answered the ETA question: explicit (specific date and time), late (how late: eta_offset_minutes), same (unchanged / on time), from_now (in N hours: eta_offset_minutes), clock_time (time of day only: eta_clock_time). null if no usable ETA.",
+    },
+    eta_offset_minutes: {
+      type: "number",
+      nullable: true,
+      description: "Minutes: the delay for kind late (2 hours late = 120), or the amount for kind from_now. Otherwise null.",
+    },
+    eta_clock_time: {
+      type: "string",
+      nullable: true,
+      description: "24-hour HH:MM, only for kind clock_time (5 PM = 17:00). Otherwise null.",
+    },
 
     delay: { type: "boolean", nullable: true },
     delay_minutes: { type: "number", nullable: true },
@@ -269,6 +307,9 @@ const SHIPMENT_RESULT_ITEM_SCHEMA = {
     "scheduled_pickup_date_correct",
     "current_location",
     "eta",
+    "eta_kind",
+    "eta_offset_minutes",
+    "eta_clock_time",
     "delay",
     "delay_minutes",
     "delay_reason",

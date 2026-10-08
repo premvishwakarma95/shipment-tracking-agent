@@ -2,6 +2,7 @@ import { CallRequest, type CallRequestDoc } from "../db/models/CallRequest.js";
 import { classifyEventType } from "./callOutcome.js";
 import { normalizeMdrTimestamp } from "./timeFormat.js";
 import { normalizePhoneE164 } from "./phoneFormat.js";
+import { computeEta } from "./etaCalc.js";
 import { sendVoiceWebhookEvent } from "../mdr/api.js";
 import { sayAndEndCall } from "../vapi/callControl.js";
 import { getCall } from "../vapi/calls.js";
@@ -160,6 +161,8 @@ export async function handleEndOfCallReport(message: {
   // shipment object (no `result` wrapper) — that wrapper is specific to
   // the outbound MDR contract (VoiceWebhookEvent's ShipmentResult), not
   // wanted in this internal debug copy.
+  doc.started_at = message.startedAt ? new Date(message.startedAt) : null;
+  doc.ended_at = message.endedAt ? new Date(message.endedAt) : null;
   doc.structured_result = buildShipmentResults(doc, structured).map(({ shipment_id, status, result }) => ({
     shipment_id,
     status,
@@ -169,8 +172,6 @@ export async function handleEndOfCallReport(message: {
   doc.event_type = eventType;
   doc.recording_url = message.recordingUrl ?? null;
   doc.transcript = message.transcript ?? null;
-  doc.started_at = message.startedAt ? new Date(message.startedAt) : null;
-  doc.ended_at = message.endedAt ? new Date(message.endedAt) : null;
   doc.lifecycle_status = "COMPLETED";
 
   const event = buildWebhookEvent(doc, structured, eventType);
@@ -225,6 +226,8 @@ async function pollForStructuredData(vapiCallId: string): Promise<Record<string,
 interface ShipmentRecord {
   shipment_id?: unknown;
   status?: unknown;
+  estimated_delivery_date?: unknown;
+  delivery_appointment?: unknown;
   [key: string]: unknown;
 }
 
@@ -244,6 +247,12 @@ function buildShipmentResults(
   const extractedRaw = structured.shipments;
   const extracted = Array.isArray(extractedRaw) ? (extractedRaw as Record<string, unknown>[]) : [];
   const byId = new Map(extracted.map((s) => [String(s.shipment_id ?? ""), s]));
+
+  // Reference "now" for ETA arithmetic: when the call actually started
+  // (started_at is set from Vapi's report before this runs), else when we
+  // created the request.
+  const callTime =
+    doc.started_at ?? (doc as unknown as { createdAt?: Date }).createdAt ?? new Date();
 
   return inboundShipments.map((shipment, index) => {
     const shipmentId =
@@ -267,7 +276,7 @@ function buildShipmentResults(
     return {
       shipment_id: shipmentId,
       status: typeof shipment.status === "string" ? shipment.status : null,
-      result: buildCommonResult(match ?? {}, doc.tool_flags, !match),
+      result: buildCommonResult(match ?? {}, doc.tool_flags, !match, shipment, callTime),
     };
   });
 }
@@ -281,6 +290,8 @@ function buildCommonResult(
   structured: Record<string, unknown>,
   toolFlags: CallRequestDoc["tool_flags"],
   notReached: boolean,
+  inboundShipment: ShipmentRecord,
+  callTime: Date,
 ): CommonCallResult {
   return {
     driver_confirmed: (structured.driver_confirmed as boolean) ?? null,
@@ -293,7 +304,9 @@ function buildCommonResult(
     scheduled_pickup_date_correct: (structured.scheduled_pickup_date_correct as boolean) ?? null,
 
     current_location: (structured.current_location as string) ?? null,
-    eta: normalizeMdrTimestamp(structured.eta, "eta"),
+    // Computed in code from what the caller said (eta_kind + numbers) and
+    // the shipment's own schedule — see etaCalc.ts.
+    eta: computeEta(structured, inboundShipment, callTime),
 
     delay: (structured.delay as boolean) ?? null,
     delay_minutes: (structured.delay_minutes as number) ?? null,
@@ -365,9 +378,14 @@ function contactInfoFromFlatFields(name: unknown, phone: unknown, email: unknown
   const n = typeof name === "string" && name ? name : null;
   // Country code always included (+1 default) — see phoneFormat.ts.
   const rawPhone = typeof phone === "string" && phone ? phone : null;
-  const p = normalizePhoneE164(rawPhone);
+  let p = normalizePhoneE164(rawPhone);
   if (rawPhone && !p) {
-    console.warn(`[webhookHandlers] extraction returned unusable phone "${rawPhone}" — dropping to null`);
+    // The caller did give a number, it just isn't a valid E.164 one (e.g.
+    // too short) — keep the digits as heard rather than losing it; MDR
+    // can see it and the agent already read it back to the caller.
+    const digitsOnly = rawPhone.replace(/\D/g, "");
+    console.warn(`[webhookHandlers] extraction returned non-standard phone "${rawPhone}" — keeping digits "${digitsOnly}"`);
+    p = digitsOnly || null;
   }
   let e = typeof email === "string" && email ? email : null;
   if (e && !EMAIL_PATTERN.test(e)) {

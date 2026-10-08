@@ -109,7 +109,11 @@ happens next in every case.
 - `eta`, `pickup_completed_at` and `delivery_completed_at`:
   `YYYY-MM-DD HH:MM:SS` (24-hour), UTC. Relative answers ("in 2 hours") are
   added to the call time; "5 PM" / "tomorrow 3 PM" become full timestamps;
-  vague answers are `null`. A spoken clock time is taken as UTC (no
+  vague answers are `null`. "N hours late" / "same as before" are measured
+  from the shipment's `estimated_delivery_date` + `delivery_appointment`; a
+  bare clock time uses the scheduled date; without a scheduled date the call
+  time is the reference (a past scheduled date is ignored). A spoken clock
+  time is taken as UTC (no
   timezone conversion).
 - `driver: {name, phone, email}` — phone always with a country code, `+1`
   assumed when none is given.
