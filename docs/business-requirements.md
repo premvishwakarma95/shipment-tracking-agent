@@ -110,7 +110,8 @@ happens next in every case.
   `YYYY-MM-DD HH:MM:SS` (24-hour), UTC. Relative answers ("in 2 hours") are
   added to the call time; "5 PM" / "tomorrow 3 PM" become full timestamps;
   vague answers are `null`. "N hours late" / "same as before" are measured
-  from the shipment's `estimated_delivery_date` + `delivery_appointment`; a
+  from the shipment's `estimated_delivery_date` + `delivery_appointment`
+  (for `PICKUP_TODAY`: from `pickup_date` + its time); a
   bare clock time uses the scheduled date; without a scheduled date the call
   time is the reference (a past scheduled date is ignored). A spoken clock
   time is taken as UTC (no
@@ -120,3 +121,17 @@ happens next in every case.
 - `driver_confirmed`: `true` = driver contact info is up to date, `false` =
   it isn't, `null` = no driver assigned / not asked.
 - A field that was never asked about or stated is `null`, never `false`.
+
+## Tone, company name, greeting (2026-10-09, MDR/client feedback)
+
+- Questions, order and fields are unchanged — only the delivery is softer
+  (see "Driver scripts with human touch"): warm, unhurried, never pressuring.
+- `calling_from` (top-level request field) is the company name spoken in the
+  introduction and whenever the caller asks who is calling / who the shipment
+  is for. The word "broker" is never used.
+- The contact is greeted by first name (`contact.name`); "I'm not <name>" is
+  handled gracefully (ask if they can still help).
+- Closing: "Thanks for the update. Drive safe. Goodbye." (drivers).
+- `recording_url` is a public link (`/recordings/<call_id>?key=…`, `&download=1`).
+- For `PICKUP_TODAY` the ETA is measured against the scheduled pickup
+  (`pickup_date`, sent as `YYYY-MM-DD HH:MM:SS`), not the delivery schedule.

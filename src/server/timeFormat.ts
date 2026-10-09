@@ -66,9 +66,18 @@ export function parseScheduledDelivery(
   shipment: { estimated_delivery_date?: unknown; delivery_appointment?: unknown },
   now: Date,
 ): ScheduledDelivery {
+  return parseSchedule(shipment.estimated_delivery_date, shipment.delivery_appointment, now);
+}
+
+// Scheduled pickup (PICKUP_TODAY ETAs): `pickup_date` is either a plain date
+// or, as MDR will send it (2026-10-09), "YYYY-MM-DD HH:MM:SS" with the time.
+export function parseScheduledPickup(shipment: { pickup_date?: unknown }, now: Date): ScheduledDelivery {
+  return parseSchedule(shipment.pickup_date, undefined, now);
+}
+
+function parseSchedule(rawDate: unknown, rawTime: unknown, now: Date): ScheduledDelivery {
   const none: ScheduledDelivery = { date: null, time: null };
 
-  const rawDate = shipment.estimated_delivery_date;
   if (typeof rawDate !== "string") return none;
   const dm = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{1,2}):(\d{2})(?::(\d{2}))?)?/.exec(rawDate.trim());
   if (!dm) return none;
@@ -81,7 +90,6 @@ export function parseScheduledDelivery(
 
   // Appointment time wins; a time embedded in estimated_delivery_date is the fallback.
   let time: string | null = null;
-  const rawTime = shipment.delivery_appointment;
   if (typeof rawTime === "string") {
     const tm = /^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?$/i.exec(rawTime.trim());
     if (tm) {

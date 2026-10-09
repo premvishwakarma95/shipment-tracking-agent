@@ -446,7 +446,8 @@ assistant:create`). Where each lives, so the next person doesn't undo it:
   `clock_time`, plus `eta_offset_minutes` / `eta_clock_time`; `eta` itself
   only for `explicit`), and `src/server/etaCalc.ts`'s `computeEta` builds
   the timestamp: explicit date+time as stated; "N hours late" = the
-  shipment's scheduled delivery (`estimated_delivery_date` +
+  shipment's scheduled delivery (PICKUP_TODAY: scheduled pickup, see "Tone,
+  calling_from…" below) (`estimated_delivery_date` +
   `delivery_appointment`, `timeFormat.ts`'s `parseScheduledDelivery`) plus
   the delay, or call time + delay when there is no usable schedule; "same
   as before"/"on time" = the scheduled time (`null` if none); "in N hours"
@@ -563,6 +564,33 @@ changes. All of it lives in `src/assistant/prompt.ts` unless noted.
   `eleven_v3` voice spikes 6-10s on some turns (worse on 2026-10-09) and
   Deepgram occasionally 5-9s. Not fixable in prompt/code; the only real lever
   is a faster voice model, which the user has declined so far.
+- **Greeting by name.** The introduction opens "Hi{{greeting_name}}, this is
+  Everly…" — `greeting_name` is the first name from `contact.name`
+  (`callVariables.ts`; titles like Dr./Mr. skipped; empty -> plain "Hi,"). The
+  name is used once, in the intro only. "No, I'm not John" is NOT a wrong
+  number: the agent says "No problem. Could you help me with some information
+  about the shipment?" and continues; only "can't help" / "no connection" /
+  "wrong number" go to the existing `reportWrongContact` flow. The contact
+  name still must NOT be copied into `driver`/`dispatcher` results.
+- **Greeting reliability (`create.ts`).** `firstMessageInterruptionsEnabled:
+  true` so a caller who says "Hello" over/just after our "Hello." is heard
+  (it used to be ignored, then "Hello? Are you there?" 14s later). The 14s
+  check-in is now `messagePlan.idleMessages` (idleTimeoutSeconds 14, max 1)
+  instead of a `customer.speech.timeout` hook — the hook counted from the
+  caller's last words, so a slow agent reply (voice spikes) fired "Hello? Are
+  you there?" mid-conversation; an idle message only counts silence after the
+  agent has finished speaking. The 30s give-up hook stays.
+- **"Who is this shipping for?"** is the SAME question as "what company are
+  you calling on behalf of?" (MDR confirmed) — answered with `calling_from`,
+  never "I don't have that detail" (a competing "no shipper/consignee" rule
+  made the model pick the wrong answer on staging; removed).
+- **Pickup ETA (MDR feedback 2026-10-09).** For a `PICKUP_TODAY` shipment the
+  ETA is the driver's ETA to PICKUP, so "N hours late" / "same as before" /
+  a bare clock time are measured against the scheduled PICKUP:
+  `pickup_date` + its time. MDR sends `pickup_date` as `YYYY-MM-DD HH:MM:SS`
+  (a plain date also works but then "late" falls back to call time + delay).
+  Other statuses still use `estimated_delivery_date` + `delivery_appointment`.
+  `etaCalc.ts` (`isPickupShipment`) + `timeFormat.ts` (`parseScheduledPickup`).
 - **MDR bearer token** (`MDR_API_AUTH_TOKEN`) for staging was replaced on
   2026-10-09 in both the local and staging-server `.env`.
 

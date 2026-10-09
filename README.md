@@ -61,7 +61,10 @@ says she is calling on behalf of — used in the introduction and when asked;
 "our company" if absent; the word "broker" is never spoken). The
 `recording_url` sent to MDR is a public link,
 `<PUBLIC_BASE_URL>/recordings/<vapi_call_id>?key=<RECORDINGS_PROXY_SECRET>`
-(add `&download=1` to download). See CLAUDE.md's "Multi-shipment calls" and "MDR multi-shipment
+(add `&download=1` to download). The agent greets the contact by first name
+(`contact.name`). For `PICKUP_TODAY` shipments send `pickup_date` as
+`YYYY-MM-DD HH:MM:SS` (UTC) — "N hours late" is added to that scheduled pickup
+time. See CLAUDE.md's "Multi-shipment calls" and "MDR multi-shipment
 feedback changes" sections.
 
 See [docs/call-flow.md](./docs/call-flow.md) for the full diagram and

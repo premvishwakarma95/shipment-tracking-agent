@@ -59,6 +59,23 @@ const assistantConfig = {
   // wasn't mirrored from the reference project's settings, so its
   // interaction with voicemailDetection below hasn't been tested here.
   firstMessageMode: "assistant-speaks-first",
+  // Added 2026-10-09: by default the caller's speech during the agent's first
+  // "Hello." is IGNORED, so a driver who says "Hello"/"Hi" the moment they
+  // pick up (or at the same time as our "Hello.") was dropped and then got
+  // "Hello? Are you there?" 14s later. Let them be heard and answered.
+  firstMessageInterruptionsEnabled: true,
+  // Added 2026-10-09: the "Are you there?" check-in is now a Vapi idle
+  // message instead of a customer.speech.timeout hook. The hook counts from
+  // the caller's last words, so a slow agent reply (voice spikes of 6-10s +
+  // the time the agent spends speaking) used up the 14s and the agent
+  // interrupted itself with "Hello? Are you there?" mid-conversation. An idle
+  // message only counts silence after the AGENT has finished speaking.
+  messagePlan: {
+    idleMessages: ["Hello? Are you there?"],
+    idleTimeoutSeconds: 14,
+    idleMessageMaxSpokenCount: 1,
+    idleMessageResetCountOnUserSpeechEnabled: true,
+  },
   serverMessages: ["end-of-call-report"],
   artifactPlan: {
     transcriptPlan: { enabled: true },
@@ -120,11 +137,6 @@ const assistantConfig = {
   // previously live untouched instead of clearing it (confirmed empirically
   // 2026-09-25).
   hooks: [
-    {
-      on: "customer.speech.timeout",
-      options: { timeoutSeconds: 14, triggerMaxCount: 1, triggerResetMode: "onUserSpeech" },
-      do: [{ type: "say", exact: "Hello? Are you there?" }],
-    },
     {
       on: "customer.speech.timeout",
       options: { timeoutSeconds: 30, triggerMaxCount: 1, triggerResetMode: "onUserSpeech" },

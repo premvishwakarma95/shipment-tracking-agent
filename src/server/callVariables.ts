@@ -25,6 +25,9 @@ export function buildCallVariables(doc: CallRequestDoc): Record<string, string> 
     calling_from: doc.calling_from?.trim() || "our company",
     // Spoken at the very end of the call, drivers only.
     closing_wish: contact.isDriver ? " Drive safe." : " Have a good day.",
+    // Name from the payload's contact.name, for greeting the person by first name.
+    contact_name: contactName(doc.contact?.name),
+    greeting_name: greetingName(doc.contact?.name),
     call_start_utc: describeUtcNow(now),
     contact_context: contact.promptContext,
     contact_summary_note: contact.summaryNote,
@@ -192,6 +195,21 @@ function questionsForStatusKey(key: keyof typeof STATUS_QUESTIONS | null, isDisp
 // question wording (DISPATCHER_STATUS_QUESTIONS); every other contact type
 // (DRIVER, CARRIER_MAIN, AFTER_HOURS, CARRIER_REPRESENTATIVE) gets the
 // default driver-facing wording — confirmed with the user 2026-10-06.
+const NAME_TITLES = new Set(["mr", "mrs", "ms", "miss", "dr", "mx"]);
+
+function contactName(name: unknown): string {
+  return typeof name === "string" && name.trim() ? name.trim() : "the contact";
+}
+
+// " John" (leading space) so the prompt can say "Hi{{greeting_name}}," and
+// read "Hi," when MDR sent no usable name.
+function greetingName(name: unknown): string {
+  if (typeof name !== "string") return "";
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  const first = parts.find((p) => !NAME_TITLES.has(p.replace(/\./g, "").toLowerCase()));
+  return first && /^[\p{L}'’-]+$/u.test(first) ? ` ${first}` : "";
+}
+
 function describeContact(contact: CallRequestDoc["contact"] | undefined): {
   isDispatcher: boolean;
   isDriver: boolean;

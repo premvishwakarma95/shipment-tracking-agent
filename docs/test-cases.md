@@ -282,6 +282,31 @@ Use a new `mdr_call_id` per call. `[x]` = verified on a real call
   asked (e.g. a `DISPATCHED` call), and `dispatcher` is `null` when no
   dispatcher details were collected.
 
+### Tone / greeting / pickup ETA (2026-10-09)
+
+- [x] **TC-TN-01 polite tone** — soft question wording, 1-3 word
+  acknowledgements, no echoing of the caller's answers, same questions/order.
+- [x] **TC-TN-02 `calling_from`** — intro and "who is this shipping for?" /
+  "what company?" both say the payload's company; the word "broker" is never
+  spoken; missing `calling_from` -> "our company".
+- [x] **TC-TN-03 closing** — drivers: "Thanks for the update. Drive safe.
+  Goodbye."; others: "...Have a good day. Goodbye."; ends ~1s after "Goodbye";
+  event `CALL_COMPLETED`.
+- [x] **TC-TN-04 public recording URL** — plays inline, `&download=1`
+  downloads, wrong key -> 401.
+- [x] **TC-TN-05 early "Hello"** — caller says Hello over/just after the
+  agent's "Hello." and gets the introduction without waiting; silence ->
+  "Hello? Are you there?" ~14s after the agent finishes, call ends at 30s.
+- [x] **TC-TN-06 pickup ETA** — `PICKUP_TODAY` with `pickup_date: "2026-10-09
+  15:00:00"`: "1 hour late" -> `16:00:00`, "same as before" -> `15:00:00`,
+  "5 PM" -> `17:00:00`; IN_TRANSIT still uses the delivery date.
+- [x] **TC-TN-07 greeting by name** — "Hi John, this is Everly…"; "No, I'm
+  not John" -> continues if they can help; "can't help" / "wrong number" ->
+  `WRONG_CONTACT`.
+- [ ] **TC-TN-08 caller interruptions on staging** — after answering a
+  caller's question the agent repeats its pending question (once missed on
+  local), and never ends the call in that turn.
+
 ## Known gaps (don't re-file)
 
 - No automated test suite yet — all of the above are manual/curl-driven.

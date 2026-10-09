@@ -1,4 +1,9 @@
-import { formatMdrTimestamp, normalizeMdrTimestamp, parseScheduledDelivery } from "./timeFormat.js";
+import {
+  formatMdrTimestamp,
+  normalizeMdrTimestamp,
+  parseScheduledDelivery,
+  parseScheduledPickup,
+} from "./timeFormat.js";
 
 // Computes the final `eta` in code instead of trusting the extraction model
 // to do date arithmetic. A real call (2026-10-08) had the caller say "2
@@ -11,6 +16,8 @@ import { formatMdrTimestamp, normalizeMdrTimestamp, parseScheduledDelivery } fro
 //   late        "2 hours late"                              -> scheduled delivery
 //                                                             (estimated_delivery_date
 //                                                             + delivery_appointment) + delay;
+//                                                             PICKUP_TODAY: scheduled pickup
+//                                                             (pickup_date + its time) + delay;
 //                                                             no schedule -> call time + delay
 //   same        "same as before" / "on time"                -> scheduled delivery; none -> null
 //   from_now    "in 2 hours"                                -> call time + amount
@@ -27,8 +34,21 @@ export interface EtaFields {
 }
 
 export interface EtaShipment {
+  status?: unknown;
+  pickup_date?: unknown;
   estimated_delivery_date?: unknown;
   delivery_appointment?: unknown;
+}
+
+// For a PICKUP_TODAY shipment the ETA the caller gives is the driver's ETA to
+// PICKUP, so "1 hour late" / "same as before" / a bare clock time are
+// measured against the scheduled PICKUP (pickup_date, with its time), not the
+// delivery schedule (MDR feedback 2026-10-09).
+function isPickupShipment(shipment: EtaShipment): boolean {
+  return (
+    typeof shipment.status === "string" &&
+    shipment.status.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_") === "PICKUP_TODAY"
+  );
 }
 
 const MAX_OFFSET_MINUTES = 60 * 24 * 30; // 30 days — anything bigger is a mis-extraction
@@ -45,7 +65,9 @@ function addMinutes(base: Date, minutes: number): string {
 
 export function computeEta(fields: EtaFields, shipment: EtaShipment, callTime: Date): string | null {
   const kind = typeof fields.eta_kind === "string" ? fields.eta_kind.trim().toLowerCase() : null;
-  const scheduled = parseScheduledDelivery(shipment, callTime);
+  const scheduled = isPickupShipment(shipment)
+    ? parseScheduledPickup(shipment, callTime)
+    : parseScheduledDelivery(shipment, callTime);
   const scheduledAt =
     scheduled.date && scheduled.time ? new Date(`${scheduled.date}T${scheduled.time}Z`) : null;
 
