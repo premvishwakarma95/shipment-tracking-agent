@@ -512,8 +512,59 @@ assistant:create`). Where each lives, so the next person doesn't undo it:
   (switching to `assistant-waits-for-user` was considered, NOT done — it
   would drop the "Hello." script MDR asked for). The introduction was
   shortened to exactly two sentences (saves only ~1s).
-- **Closing pause: no change needed.** A natural ~1-2s pause already
-  exists before hang-up; a `[long pause]` tag was tried and reverted.
+- **Closing pause.** Superseded 2026-10-09: the closing now ends with a
+  `[short pause]` tag, see "Tone, calling_from, recordings, closing" below.
+
+## Tone, calling_from, recordings, closing (2026-10-09)
+
+MDR/client feedback: the questions stay exactly the same, only the delivery
+changes. All of it lives in `src/assistant/prompt.ts` unless noted.
+
+- **Polite tone.** "Tone" section is warm/unhurried; "Phrasing the questions
+  politely" gives soft wordings with a lead-in ("Could you tell me where you
+  are right now?", "And about when do you expect to get there?", "And are you
+  running into any delays or issues at the moment?"; dispatcher versions talk
+  about the driver). A bare "Where…/When…/Are…" is avoided — if the voice
+  clips a sentence's first word it still makes sense. Each turn is a 1-3 word
+  acknowledgement ("Got it.", "Okay.") + the question; the agent must NOT
+  echo the caller's answer back ("Okay Valley", "About 2 hours") unless it
+  is unsure it heard it. Question lists, order and skip rules are unchanged.
+- **`calling_from`** (top-level field of the call request, optional). Stored
+  on `CallRequest.calling_from`, exposed to the prompt as `{{calling_from}}`
+  (`callVariables.ts`; "our company" when absent). It replaced every
+  hardcoded company name (intro, voicemail message, caller Q&A). The word
+  "broker" is never spoken; "who is this shipping for?" / "what company are
+  you calling on behalf of?" / "where are you calling from?" are all the same
+  question and get "I'm Everly, calling on behalf of <calling_from> for a
+  quick operational update on your shipment(s)."
+- **Caller questions.** Each shipment block carries "Shipment details" (status,
+  pickup date, estimated delivery date, delivery appointment, carrier,
+  `callVariables.ts`) the agent may share ONLY when asked; anything missing →
+  "I don't have that detail in front of me". It admits being an AI when asked.
+  After answering a caller's question it asks the pending question again and
+  must never call `endCall` in that turn (a real call ended after answering
+  "How many shipments?" with a shipment still unasked).
+- **Closing.** `END_CALL_MESSAGE` = "Thanks for the update.{{closing_wish}}
+  Goodbye. [short pause]"; `closing_wish` is " Drive safe." for `DRIVER`
+  contacts, " Have a good day." otherwise (Vapi fills it from
+  `variableValues`, like `{{shipment_ids_text}}` in the voicemail message).
+  `[short pause]` is an eleven_v3 tag that stops the hang-up cutting off
+  "Goodbye." — `[long pause]` was too long.
+- **Names/phones.** A garbled driver name ("Same", "M") is re-asked and
+  confirmed; the phone is read back digit by digit and a short number gets
+  "Is that the full number?"; a number that can't be made E.164 is kept as the
+  spoken digits instead of `null` (`contactInfoFromFlatFields`).
+- **`recording_url` is public** (`webhookHandlers.ts` `buildPlayableRecordingUrl`
+  → `src/server/recordings.ts`): `<PUBLIC_BASE_URL>/recordings/<vapi_call_id>?key=<RECORDINGS_PROXY_SECRET>`,
+  plays inline, `&download=1` downloads. The route calls Vapi's
+  `/call/{id}/stereo-recording` server-side with the Vapi key (Vapi's own
+  recording URL is private). Same approach as Agent-1/2.
+- **Latency is the voice, not the model.** Per-turn: model ~0.4-0.8s, but
+  `eleven_v3` voice spikes 6-10s on some turns (worse on 2026-10-09) and
+  Deepgram occasionally 5-9s. Not fixable in prompt/code; the only real lever
+  is a faster voice model, which the user has declined so far.
+- **MDR bearer token** (`MDR_API_AUTH_TOKEN`) for staging was replaced on
+  2026-10-09 in both the local and staging-server `.env`.
 
 ## Wrong number vs. wrong contact (both via reportWrongContact)
 
@@ -587,14 +638,13 @@ handles both the message and the hangup.
   of the LLM signal: if the transcript has zero content, force
   `CALL_DROPPED` regardless of what `call_ended_abruptly` says. Don't
   revert to trusting the extraction alone for this case.
-- **A normal call can be reported `CALL_HANG` if the first word of the
-  closing line is clipped.** `classifyEventType` looks for the first
-  sentence of `END_CALL_MESSAGE` ("Thank you for your time and the
-  information") in the transcript; a real call transcribed it as "You for
-  your time..." and was misclassified. Not fixed (needs the user's
-  approval) — a looser match such as "for your time and the information"
-  would cover it. The clipped first word itself looks like a voice
-  (`eleven_v3`) quirk.
+- **Closing-line detection (changed 2026-10-09).** The closing line is now
+  "Thanks for the update. Drive safe. Goodbye." (drivers) / "Thanks for the
+  update. Have a good day. Goodbye." (others), so the old first-sentence
+  match is gone. `callOutcome.ts`'s `COMPLETION_SIGNAL` looks for an AI line
+  containing "goodbye", "drive safe" or "have a good day" (the final
+  "Goodbye." is sometimes cut off by the hang-up). Don't use "Thanks for the
+  update" as the signal: the agent says it mid-call as an acknowledgement.
 - **A call cut short after the closing line still reads `CALL_COMPLETED`.**
   The completion check is only "closing line present in the transcript",
   not "every shipment's questions were covered".

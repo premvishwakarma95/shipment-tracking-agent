@@ -20,6 +20,11 @@ export function buildCallVariables(doc: CallRequestDoc): Record<string, string> 
   const now = new Date();
 
   return {
+    // Company name from the payload's calling_from; generic wording if MDR
+    // didn't send one (no company name is hardcoded anywhere).
+    calling_from: doc.calling_from?.trim() || "our company",
+    // Spoken at the very end of the call, drivers only.
+    closing_wish: contact.isDriver ? " Drive safe." : " Have a good day.",
     call_start_utc: describeUtcNow(now),
     contact_context: contact.promptContext,
     contact_summary_note: contact.summaryNote,
@@ -189,6 +194,7 @@ function questionsForStatusKey(key: keyof typeof STATUS_QUESTIONS | null, isDisp
 // default driver-facing wording — confirmed with the user 2026-10-06.
 function describeContact(contact: CallRequestDoc["contact"] | undefined): {
   isDispatcher: boolean;
+  isDriver: boolean;
   promptContext: string;
   summaryNote: string;
 } {
@@ -215,5 +221,5 @@ function describeContact(contact: CallRequestDoc["contact"] | undefined): {
     ? `The person on this call is the ${role} — NOT the driver. In every call_summary, attribute what they said to "the ${role}" (e.g. "The ${role} said the driver is ..."), and never call them "the driver".`
     : `The person on this call is the ${role}. In every call_summary, attribute what they said to "the ${role}", not to a different role.`;
 
-  return { isDispatcher, promptContext, summaryNote };
+  return { isDispatcher, isDriver: type === "DRIVER", promptContext, summaryNote };
 }

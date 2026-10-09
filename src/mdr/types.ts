@@ -47,6 +47,9 @@ export interface CallRequestPayload {
   mdr_call_id: string;
   call_type: string;
   contact: Contact;
+  // Name of the company Everly says she is calling on behalf of / from
+  // (spoken in the introduction and when asked). Optional.
+  calling_from?: string;
   shipments: ShipmentInput[];
 }
 

@@ -84,6 +84,7 @@ async function handleCallRequest(req: Request, res: Response): Promise<void> {
       // mdr/types.ts's CallRequestPayload.call_type comment.
       call_type: body.call_type,
       contact: body.contact,
+      calling_from: typeof body.calling_from === "string" && body.calling_from.trim() ? body.calling_from.trim() : null,
       shipments: body.shipments,
     });
   } catch (err: unknown) {

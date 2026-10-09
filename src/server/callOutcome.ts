@@ -1,15 +1,15 @@
 import type { EventType } from "../mdr/types.js";
 import type { CallRequestDoc } from "../db/models/CallRequest.js";
-import { END_CALL_MESSAGE } from "../assistant/prompt.js";
 
 type ToolFlags = CallRequestDoc["tool_flags"];
 
-// Derived from END_CALL_MESSAGE, NOT a separately hardcoded copy — if MDR
-// ever changes the closing wording, this stays in sync automatically since
-// it reads the live constant instead of a second string someone has to
-// remember to update. First sentence only (not the full message with
-// punctuation) so minor ASR transcription noise doesn't break the match.
-const COMPLETION_SIGNAL = END_CALL_MESSAGE.split(".")[0].trim();
+// The closing line is "Thanks for the update. Drive safe. Goodbye." The
+// final "Goodbye." is sometimes cut off by the hang-up (call LOCAL-TONE-003's
+// transcript ended at "Drive safe."), so "drive safe" / "have a good day"
+// count too. Mid-call acknowledgements like "Thanks for the update" can't be
+// the signal because the agent says them throughout the call. Matches an AI
+// line, tolerant of ASR noise elsewhere.
+const COMPLETION_SIGNAL = /AI:[^\n]*(\bgoodbye\b|drive safe|have a good day)/i;
 
 // Allowlist, not denylist (same convention as the reference project):
 // anything we don't explicitly recognize maps to the conservative
@@ -131,7 +131,7 @@ export function classifyEventType(
     // COMPLETION_SIGNAL yet in that case, so the same text check catches
     // it correctly rather than reporting a hollow CALL_COMPLETED).
     if (endedReason === "customer-ended-call" || endedReason === "assistant-ended-call") {
-      const reachedClosing = transcript.includes(COMPLETION_SIGNAL);
+      const reachedClosing = COMPLETION_SIGNAL.test(transcript);
       if (!reachedClosing || callEndedAbruptly) {
         return "CALL_HANG";
       }

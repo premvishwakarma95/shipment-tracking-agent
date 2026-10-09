@@ -99,6 +99,9 @@ const CallRequestSchema = new Schema(
     // CallRequestPayload.call_type comment.
     call_type: { type: String, required: true },
     contact: { type: ContactSchema, required: true },
+    // Company name MDR wants spoken as "calling on behalf of …" — see
+    // callVariables.ts ({{calling_from}}).
+    calling_from: { type: String, default: null },
     // CHANGED 2026-09-28: MDR moved from one shipment per call request to
     // an array of shipments per call (sometimes still just one), so
     // details for all of them can be collected in a single conversation.

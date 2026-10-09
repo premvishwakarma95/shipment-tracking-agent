@@ -103,6 +103,16 @@ async function applyToolCall(doc: CallRequestDoc, call: VapiToolCall) {
   }
 }
 
+// Vapi's own recordingUrl is a private storage path that can't be played
+// without credentials. MDR gets our public proxy link instead (see
+// recordings.ts): <base>/recordings/<vapi_call_id>?key=<key>, add
+// &download=1 to download.
+function buildPlayableRecordingUrl(vapiCallId: string): string {
+  const base = (process.env.PUBLIC_BASE_URL ?? "").replace(/\/+$/, "");
+  const key = process.env.RECORDINGS_PROXY_SECRET ?? "";
+  return `${base}/recordings/${vapiCallId}?key=${key}`;
+}
+
 export async function handleEndOfCallReport(message: {
   call: { id: string };
   endedReason?: string;
@@ -170,7 +180,7 @@ export async function handleEndOfCallReport(message: {
   }));
   doc.call_ended_abruptly = (structured.call_ended_abruptly as boolean) ?? null;
   doc.event_type = eventType;
-  doc.recording_url = message.recordingUrl ?? null;
+  doc.recording_url = message.recordingUrl ? buildPlayableRecordingUrl(message.call.id) : null;
   doc.transcript = message.transcript ?? null;
   doc.lifecycle_status = "COMPLETED";
 
