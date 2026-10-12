@@ -58,7 +58,8 @@ real contract now, not a placeholder guess (see
 **Important: the MDR webhook is event-shaped, not one universal envelope.**
 `NO_ANSWER`/`VOICEMAIL`/`BUSY`/`CALL_FAILED` are minimal
 (`{event_type, mdr_call_id, voice_call_id}`), `CALL_DROPPED`/`CALL_HANG`
-carry a `shipments[]` array of partial per-shipment results,
+carry a `shipments[]` array of partial per-shipment results plus
+`recording_url`/`transcript` (added 2026-10-12 at MDR's request),
 `CALLBACK_REQUESTED` carries `callback_after_minutes`, `WRONG_CONTACT`
 carries `referred_contact`, and `CALL_COMPLETED` carries a `shipments[]`
 array of full per-shipment results (one entry per shipment MDR sent on the
@@ -666,6 +667,12 @@ handles both the message and the hangup.
   of the LLM signal: if the transcript has zero content, force
   `CALL_DROPPED` regardless of what `call_ended_abruptly` says. Don't
   revert to trusting the extraction alone for this case.
+- **Closing line beats the extraction's "abrupt" guess (2026-10-12).** In
+  `classifyEventType`, if the transcript contains the closing line the call is
+  `CALL_COMPLETED` regardless of `call_ended_abruptly`; no closing line ->
+  `CALL_HANG`. A real staging call (A3-C1HFCSUV1IFY) had the full closing but
+  a messy ending, the extraction guessed "abrupt", and it was reported
+  `CALL_HANG` with no transcript for MDR.
 - **Closing-line detection (changed 2026-10-09).** The closing line is now
   "Thanks for the update. Drive safe. Goodbye." (drivers) / "Thanks for the
   update. Have a good day. Goodbye." (others), so the old first-sentence

@@ -131,8 +131,14 @@ export function classifyEventType(
     // COMPLETION_SIGNAL yet in that case, so the same text check catches
     // it correctly rather than reporting a hollow CALL_COMPLETED).
     if (endedReason === "customer-ended-call" || endedReason === "assistant-ended-call") {
+      // The closing line in the transcript is the deterministic signal. The
+      // extraction's call_ended_abruptly guess is NOT allowed to override
+      // it: call A3-C1HFCSUV1IFY had the full closing ("...Drive safe.
+      // Goodbye.", endedReason assistant-ended-call) but a messy ending made
+      // the extraction guess "abrupt" and the call was reported CALL_HANG.
+      // Without the closing line, the abrupt flag is irrelevant too.
       const reachedClosing = COMPLETION_SIGNAL.test(transcript);
-      if (!reachedClosing || callEndedAbruptly) {
+      if (!reachedClosing) {
         return "CALL_HANG";
       }
     }

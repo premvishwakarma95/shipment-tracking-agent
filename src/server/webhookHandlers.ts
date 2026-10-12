@@ -452,6 +452,8 @@ function buildWebhookEvent(
         voice_call_id: voiceCallId,
         shipments,
         call_summary: summarizePartialShipments(shipments),
+        recording_url: doc.recording_url ?? null,
+        transcript: doc.transcript ?? null,
       };
     }
 

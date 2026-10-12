@@ -193,6 +193,10 @@ export type VoiceWebhookEvent =
       event_type: "CALL_DROPPED";
       shipments: PartialShipmentResult[];
       call_summary: string | null;
+      // Added 2026-10-12 at MDR's request (they saw no transcript on a
+      // CALL_HANG): same values CALL_COMPLETED carries.
+      recording_url: string | null;
+      transcript: string | null;
     })
   // Same shape as CALL_DROPPED, confirmed by the user 2026-09-24 — see
   // CallRequest.ts's EVENT_TYPES comment for why these are two separate
@@ -201,6 +205,10 @@ export type VoiceWebhookEvent =
       event_type: "CALL_HANG";
       shipments: PartialShipmentResult[];
       call_summary: string | null;
+      // Added 2026-10-12 at MDR's request (they saw no transcript on a
+      // CALL_HANG): same values CALL_COMPLETED carries.
+      recording_url: string | null;
+      transcript: string | null;
     })
   | (WebhookEventBase & {
       event_type: "CALLBACK_REQUESTED";
