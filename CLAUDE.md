@@ -592,6 +592,31 @@ changes. All of it lives in `src/assistant/prompt.ts` unless noted.
   (a plain date also works but then "late" falls back to call time + delay).
   Other statuses still use `estimated_delivery_date` + `delivery_appointment`.
   `etaCalc.ts` (`isPickupShipment`) + `timeFormat.ts` (`parseScheduledPickup`).
+- **Previous summary / open issue (2026-10-12).** When a shipment carries a
+  `previous_summary` or `open_issue`, its block in `{{shipments_block}}` gets an
+  inline instruction (`callVariables.ts`, `PREVIOUS_CONTEXT_RULE`): don't ask
+  the questions it answers cold; say what it states and ask whether it is
+  still correct ("Earlier we were advised the ETA was about 2:30 PM — is that
+  still correct?", "Earlier there was a traffic delay — is that still the
+  case?"), take a changed answer, ask the rest normally, and on a
+  multi-shipment call still say the shipment ID first. The general rule far
+  below in the prompt was NOT enough (the agent asked everything cold and only
+  mentioned the delay when the caller asked). A caller confirming the
+  previously stated ETA is extracted as `clock_time` of that time (see
+  `resultSchema.ts` "ETA FIELDS"). Put the DATE in `previous_summary` if the
+  old ETA wasn't on the shipment's scheduled date — a bare clock time lands on
+  the scheduled date (or the call's date).
+- **ETA classification.** `explicit` needs a calendar date or day name from
+  the CALLER ("tomorrow 3 PM"); a bare time ("2:30 PM", "2 30"), even if the
+  agent said "today" while confirming, is `clock_time` and is written exactly
+  as spoken, no time-zone shift (a call stored 14:30 as 19:30 otherwise).
+- **Shipment matching fallback.** Results are matched to inbound shipments by
+  `shipment_id`. If the agent never spoke a shipment's ID the extraction
+  returns it empty and that shipment used to be reported "Not discussed on
+  this call." (LOCAL-PREV-002). `buildShipmentResults` now hands extraction
+  entries whose ID matches no inbound shipment, in order, to the inbound
+  shipments with no match (multi-shipment calls only; shipments are worked in
+  order). Genuinely unreached shipments are still "Not discussed".
 - **MDR bearer token** (`MDR_API_AUTH_TOKEN`) for staging was replaced on
   2026-10-09 in both the local and staging-server `.env`.
 

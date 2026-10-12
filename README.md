@@ -64,7 +64,10 @@ says she is calling on behalf of — used in the introduction and when asked;
 (add `&download=1` to download). The agent greets the contact by first name
 (`contact.name`). For `PICKUP_TODAY` shipments send `pickup_date` as
 `YYYY-MM-DD HH:MM:SS` (UTC) — "N hours late" is added to that scheduled pickup
-time. See CLAUDE.md's "Multi-shipment calls" and "MDR multi-shipment
+time. Optional per-shipment `previous_summary` / `open_issue`: the agent confirms
+them ("Earlier we were advised the ETA was about 2:30 PM — is still
+correct?") instead of asking cold; put a date in them if the old ETA wasn't on
+the scheduled date. See CLAUDE.md's "Multi-shipment calls" and "MDR multi-shipment
 feedback changes" sections.
 
 See [docs/call-flow.md](./docs/call-flow.md) for the full diagram and

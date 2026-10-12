@@ -258,6 +258,23 @@ function buildShipmentResults(
   const extracted = Array.isArray(extractedRaw) ? (extractedRaw as Record<string, unknown>[]) : [];
   const byId = new Map(extracted.map((s) => [String(s.shipment_id ?? ""), s]));
 
+  // Fallback for extraction entries whose shipment_id matches none of the
+  // inbound shipments (e.g. "" because the agent never spoke that
+  // shipment's ID — LOCAL-PREV-002 reported its first shipment as "Not
+  // discussed" for that reason). Shipments are worked in order, so hand these
+  // entries, in order, to the inbound shipments that found no match by ID.
+  const inboundIds = new Set(inboundShipments.map((s) => (typeof s.shipment_id === "string" ? s.shipment_id : "")));
+  const orphans = extracted.filter((e) => !inboundIds.has(String(e.shipment_id ?? "")));
+  const unmatchedInbound = inboundShipments.filter(
+    (s) => !(typeof s.shipment_id === "string" && byId.has(s.shipment_id)),
+  );
+  const orphanFor = new Map<ShipmentRecord, Record<string, unknown>>();
+  if (inboundShipments.length > 1) {
+    unmatchedInbound.forEach((s, i) => {
+      if (orphans[i]) orphanFor.set(s, orphans[i]);
+    });
+  }
+
   // Reference "now" for ETA arithmetic: when the call actually started
   // (started_at is set from Vapi's report before this runs), else when we
   // created the request.
@@ -277,6 +294,7 @@ function buildShipmentResults(
     // shipment as "not reached" (confirmed 2026-10-06, LOCAL-DRIVER-001).
     const match =
       byId.get(shipmentId) ??
+      orphanFor.get(shipment) ??
       (inboundShipments.length === 1 && extracted.length === 1 ? extracted[0] : undefined);
     if (!match) {
       console.warn(

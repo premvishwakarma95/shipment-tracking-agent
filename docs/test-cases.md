@@ -307,6 +307,17 @@ Use a new `mdr_call_id` per call. `[x]` = verified on a real call
   caller's question the agent repeats its pending question (once missed on
   local), and never ends the call in that turn.
 
+- [x] **TC-TN-09 previous summary** — shipment with `previous_summary`
+  + `open_issue` is confirmed ("Earlier we were advised…"), shipment ID said
+  first on multi-shipment calls, a shipment without one is asked cold; first
+  shipment is NOT "Not discussed" even if its ID wasn't spoken.
+- [x] **TC-TN-10 clock-time ETA** — "2:30 PM" (even after the agent said
+  "today") is stored as 14:30, not shifted; confirming a previously stated ETA
+  stores that time.
+- [x] **TC-TN-11 event type** — full call with the closing line is
+  `CALL_COMPLETED` even if the extraction guesses "abrupt"; `CALL_HANG` /
+  `CALL_DROPPED` payloads include `transcript` and `recording_url`.
+
 ## Known gaps (don't re-file)
 
 - No automated test suite yet — all of the above are manual/curl-driven.

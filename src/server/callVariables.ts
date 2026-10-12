@@ -65,6 +65,12 @@ function shipmentId(shipment: ShipmentLike, index: number): string {
     : `unknown-${index + 1}`;
 }
 
+// Added 2026-10-12: with a previous summary on a shipment the agent still asked
+// every question cold (a real call, LOCAL-PREV-001) and only mentioned the
+// earlier delay when the caller asked. An inline instruction on that shipment
+// is followed far more reliably than the general rule further down the prompt.
+const PREVIOUS_CONTEXT_RULE = `USE THE PREVIOUS SUMMARY / OPEN ISSUE ABOVE for this shipment: do NOT ask the questions it already answers cold. Instead say what it states and ask whether it is still correct, e.g. "Earlier we were advised the ETA was about 2:30 PM — is that still correct?" or "Earlier there was a traffic delay — is that still the case?". If the answer changed, take the new answer (ask a normal follow-up if needed). Anything the previous summary does NOT cover, ask normally. Keep it to one short sentence per question. (On a call with several shipments, still say this shipment's ID first when you start it, then use the previous summary.)`;
+
 function renderShipmentBlock(shipment: ShipmentLike, index: number, isDispatcher: boolean): string {
   const id = shipmentId(shipment, index);
   const status = typeof shipment.status === "string" ? shipment.status.trim() : "";
@@ -79,6 +85,11 @@ function renderShipmentBlock(shipment: ShipmentLike, index: number, isDispatcher
       ? shipment.open_issue
       : "None.";
 
+  const hasPrevious =
+    (typeof shipment.previous_summary === "string" && shipment.previous_summary.trim() !== "") ||
+    (typeof shipment.open_issue === "string" && shipment.open_issue.trim() !== "");
+  const previousUse = hasPrevious ? `\n${PREVIOUS_CONTEXT_RULE}\n` : "";
+
   const mdrQuestions = renderMdrQuestions(shipment.questions);
   const details = renderShipmentDetails(shipment, status);
   const statusKey = resolveStatusKey(status);
@@ -91,7 +102,7 @@ ${details}
 
 Previous summary: ${previousSummary}
 Open issue to reconfirm: ${openIssue}
-
+${previousUse}
 Questions MDR specifically wants answered for this shipment:
 ${mdrQuestions}
 

@@ -72,9 +72,10 @@ ETA FIELDS — do NOT work out the final ETA yourself. The system computes it
 from what you report. For each shipment, classify what the caller said about
 the ETA with eta_kind and fill ONLY the matching value field(s); leave the
 others null:
-- "explicit": the caller gave a specific date AND time ("tomorrow 3 PM",
-  "October 10 at 2 PM"). Set eta to that date and time in the TIMESTAMP
-  FORMAT above ("tomorrow", "Friday" etc. are worked out from the call date).
+- "explicit": the CALLER gave a calendar date or a day name AND a time
+  ("tomorrow 3 PM", "October 10 at 2 PM", "Friday at 9"). Set eta to that date
+  and time in the TIMESTAMP FORMAT above ("tomorrow", "Friday" etc. are worked
+  out from the call date). The word "today" alone is NOT a date.
 - "late": the caller said how late or delayed it is ("2 hours late", "30
   minutes behind", "delayed by 3 hours"). Set eta_offset_minutes to the total
   delay in minutes (2 hours late = 120). NOT the same as "in 2 hours".
@@ -82,9 +83,16 @@ others null:
   scheduled", "no change").
 - "from_now": a time relative to NOW ("in 2 hours", "in 30 minutes"). Set
   eta_offset_minutes to that amount in minutes.
-- "clock_time": only a time of day with no date ("5 PM", "2:30 PM"). Set
-  eta_clock_time to that time in 24-hour HH:MM ("17:00", "14:30"). Do not
+- "clock_time": only a time of day with no calendar date or day name ("5
+  PM", "2:30 PM", "2 30"). Set eta_clock_time to that time in 24-hour HH:MM
+  ("17:00", "14:30") EXACTLY as spoken — no time-zone conversion, no adding or
+  subtracting hours. This also applies when the agent said "today" while
+  confirming ("Is that 2 30 PM today?" / "Yes") — still clock_time. Do not
   guess a date.
+- If the AGENT stated an earlier/previous ETA ("Earlier we were advised the
+  ETA was about 2:30 PM — is that still correct?") and the caller confirmed it
+  ("yes", "still correct"), the ETA is that stated time: use clock_time (or
+  explicit if a date was stated). If they gave a new time instead, use that.
 - null: no ETA was given, or the answer was vague ("soon", "later", "this
   afternoon", a day with no time, an unclear fragment). Never guess.
 Set eta (the full timestamp) ONLY for "explicit"; for every other kind eta

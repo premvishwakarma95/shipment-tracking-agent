@@ -135,3 +135,14 @@ happens next in every case.
 - `recording_url` is a public link (`/recordings/<call_id>?key=…`, `&download=1`).
 - For `PICKUP_TODAY` the ETA is measured against the scheduled pickup
   (`pickup_date`, sent as `YYYY-MM-DD HH:MM:SS`), not the delivery schedule.
+
+## Previous summary and open issue (2026-10-12)
+
+- If a shipment has `previous_summary` / `open_issue`, the agent does not ask
+  those questions cold: it states the earlier information and asks whether it
+  is still correct, and reconfirms an open issue. Changed answers are taken as
+  the new answer; anything not covered is asked normally. Shipments without
+  them are asked from scratch.
+- A bare clock time ("2:30 PM") is stored exactly as spoken (24-hour) on the
+  scheduled date, or the call's date — include the date in `previous_summary`
+  when it matters.
