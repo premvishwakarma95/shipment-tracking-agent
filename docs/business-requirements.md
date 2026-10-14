@@ -23,7 +23,7 @@ Webhook = Voice Team calls MDR (`POST https://staging.mydrayrate.com/api/voice/c
 One contact (type: DRIVER / DISPATCHER / SECONDARY_DISPATCHER /
 CARRIER_MAIN / AFTER_HOURS / CARRIER_REPRESENTATIVE — exact values, anything
 else is rejected with a 400) and a `shipments[]` array (one or more
-shipments for that contact). Each shipment carries its own `status`,
+shipments for that contact). Each shipment may also carry `pickup_location`, `delivery_location`, `driver {name, phone}` and the scheduled dates. Each shipment carries its own `status`,
 `questions[]` list of what MDR wants asked, and `previous_summary`/
 `open_issue` — prior context to avoid starting from zero every call.
 
@@ -38,30 +38,38 @@ Content below reflects MDR's 2026-09-29 revised wording (`STATUS_QUESTIONS`
 is the source of truth — keep this digest in sync with it, not the other
 way around):
 
-- **OUT_FOR_DELIVERY** — Where are you now? Current ETA? Any delay (if yes,
-  the cause: traffic / weather / mechanical / other)? Has delivery happened
-  yet — asked only if no ETA/delay/"delivered" was already given; if
-  delivered, what date and time.
-- **PICKUP_TODAY** — Has a driver been assigned? If yes: is the driver
-  contact information updated? (if not, driver name and phone). Driver's
-  ETA to pickup (skipped when no driver is assigned). Pickup appointment
-  confirmed? Any delay with the pickup?
-- **DISPATCHED** — Has a driver been assigned? If yes: is the driver
-  contact information updated? (if not, driver name and phone). Equipment
-  assigned? Scheduled pickup date still correct? Appointment confirmed? Any
-  delay with the shipment?
-- **IN_TRANSIT** — Where are you now? Current ETA? Any delay (and its
-  cause)?
+Calling patterns (MDR "Status-Based Calling Scripts", 2026-10-14 — same
+questions, different order/skips; per status and per contact type, driver vs
+dispatcher; `src/assistant/prompt.ts` is the source of truth). Every call
+first names the shipment ID, route and the relevant scheduled time.
+
+- **OUT_FOR_DELIVERY** — "Already delivered, or still on track for <time>?"
+  Delivered -> date/time only. On track/on schedule -> done (answers ETA and
+  delay). A time or distance -> that is the ETA, then the delay question.
+  Late -> new ETA + cause. Unsure -> location, then ETA.
+- **PICKUP_TODAY** — Confirm the driver on record (or "Has a driver been
+  assigned?"; if not up to date, collect name and phone). Then ONE on-schedule
+  question instead of "driver's ETA" (on schedule answers ETA + delay), the
+  pickup appointment question (always asked), and the delay question only if
+  still needed. No driver: ask whether one will be available in time.
+- **DISPATCHED** — Driver on record / assigned (no driver: record it and when
+  one is expected, no contact details). Equipment assigned (if not: what is
+  pending, does it affect pickup). One combined "pickup still correct and
+  appointment confirmed?" (changed date -> revised date/time; unconfirmed ->
+  when it will be). Any delay (reason + revised pickup time).
+- **IN_TRANSIT** — "On track for <day + time>?" On schedule -> accept, ask
+  location, no ETA/delay questions. Late -> new arrival time + cause. Several
+  days out -> confirm the schedule only. No scheduled time -> ask the
+  expected date/approximate arrival (stored as an estimate). Delay cause is a
+  single `issue_type`.
 - **Dispatcher contacts** (`DISPATCHER`, `SECONDARY_DISPATCHER`) are asked
-  about the driver in the third person for OUT_FOR_DELIVERY and IN_TRANSIT
-  ("Where is the driver currently?", "What is the driver's current ETA?",
-  "Is there any delay with the delivery?", "Has delivery happened yet?").
-  Every other contact type gets the wording above. `call_summary` names the
-  actual person on the call.
-- **CONTACT_UPDATE_REQUEST** — no longer a separate call type (merged into
-  the common `SHIPMENT_GROUP` format, only reachable via a shipment's own
-  `status`). Driver's name/phone/email, dispatcher's name/phone/email
-  (asked one at a time, not bundled), whether these are the best contacts.
+  about the driver in the third person. Every other contact type gets the
+  driver wording. `call_summary` names the actual person on the call.
+- **CONTACT_UPDATE_REQUEST** — contact accuracy only (no ETA/location/delay).
+  Confirm the driver on record and the dispatcher; ask name, phone (read back,
+  10 digits, country code added) and optional email only for what is wrong or
+  missing; confirmed contacts end the call. If the driver can't give the
+  dispatcher's details they are flagged for verification (`open_issue`).
 
 ## Escalation
 
@@ -146,3 +154,9 @@ happens next in every case.
 - A bare clock time ("2:30 PM") is stored exactly as spoken (24-hour) on the
   scheduled date, or the call's date — include the date in `previous_summary`
   when it matters.
+
+## Silence mid-call (2026-10-14, MDR decision)
+
+If the caller goes silent and the agent gives up with the normal closing line,
+the event stays `CALL_COMPLETED`; `call_summary` states that the caller stopped
+responding and which questions went unanswered.

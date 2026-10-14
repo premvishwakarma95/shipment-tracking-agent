@@ -19,6 +19,8 @@ import {
 //                                                             PICKUP_TODAY: scheduled pickup
 //                                                             (pickup_date + its time) + delay;
 //                                                             no schedule -> call time + delay
+//   early       "10 minutes early" / "an hour before the appointment"  -> scheduled time MINUS
+//                                                             the amount (null if no schedule)
 //   same        "same as before" / "on time"                -> scheduled delivery; none -> null
 //   from_now    "in 2 hours"                                -> call time + amount
 //   clock_time  "5 PM" (no day)                             -> that time on the scheduled
@@ -47,7 +49,7 @@ export interface EtaShipment {
 function isPickupShipment(shipment: EtaShipment): boolean {
   return (
     typeof shipment.status === "string" &&
-    shipment.status.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_") === "PICKUP_TODAY"
+    ["PICKUP_TODAY", "DISPATCHED"].includes(shipment.status.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_"))
   );
 }
 
@@ -79,6 +81,15 @@ export function computeEta(fields: EtaFields, shipment: EtaShipment, callTime: D
       const delay = offsetMinutes(fields.eta_offset_minutes);
       if (delay === null) return null;
       return addMinutes(scheduledAt ?? callTime, delay);
+    }
+
+    case "early": {
+      // "10 minutes early" / "an hour before the appointment" — the scheduled
+      // time minus the amount. Without a usable schedule there is nothing to
+      // subtract from, so null rather than a made-up time.
+      const early = offsetMinutes(fields.eta_offset_minutes);
+      if (early === null || !scheduledAt) return null;
+      return addMinutes(scheduledAt, -early);
     }
 
     case "same":

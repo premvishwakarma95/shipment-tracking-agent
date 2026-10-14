@@ -55,6 +55,20 @@ project's docs did.
     with an underscore). Rejected with a clear 400 listing the accepted
     values. Confirm MDR will send the exact values.
 
+## OPEN — raised with the 2026-10-14 status-based scripts
+
+- Response shape: flat `driver_name`/`driver_number` (script example) vs our
+  nested `driver {name, phone, email}`; driver given as an array.
+- Demo acceptance #7: how edited/disabled/reordered `questions[]` per
+  status/contact type should behave with the new scripts (today MDR's own
+  questions are listed separately and the standard ones are dropped per status).
+- "Unable to reach driver" escalation for dispatcher calls; appointment/
+  equipment flags in the response.
+- Time zone of spoken and scheduled times (all treated as UTC today); a
+  date-only schedule + "on schedule" gives `eta` at `00:00:00`.
+- Confirmed by MDR 2026-10-14: a caller who goes silent mid-call is still
+  `CALL_COMPLETED`, with the silence described in `call_summary`.
+
 ## CONFIRMED 2026-10-06 (MDR feedback on multi-shipment calls)
 
 - Timestamps `eta`/`pickup_completed_at`/`delivery_completed_at` use

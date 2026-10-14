@@ -26,7 +26,7 @@ export const FIRST_MESSAGE = "Hello.";
 // to say a farewell in the same turn as the tool call (it kept saying just
 // "Goodbye." and the hang-up cut off the rest).
 export const END_CALL_MESSAGE =
-  "Thanks for the update.{{closing_wish}} Goodbye. [short pause]";
+  "Alright, thanks for the update.{{closing_wish}} Goodbye. [short pause]";
 
 // Spoken by our own server via Live Call Control (see src/vapi/callControl.ts),
 // NOT by the LLM and NOT via Vapi's endCallMessage — deterministic exact
@@ -92,9 +92,7 @@ const DRIVER_ASSIGNED_FOLLOW_UP = `  - If NO: skip straight to the remaining que
     - If YES: do NOT ask for the driver's name or phone number.
     - If NO: ask "What is the driver's name?" and then "What is the
       driver's phone number?" — one question at a time, reading the phone
-      number back to confirm. A phone number has 10 digits: if the caller
-      gives fewer, ask once "Is that the full number?" before reading it
-      back. When you read it back, say EVERY digit the caller gave, in
+      number back to confirm. Spoken forms count as digits: "double 8" is 8 8, "triple 5" is 5 5 5, "oh" is 0. Count the digits you heard BEFORE reading back: a phone number has 10 digits, so if you counted fewer (or more), do NOT read it back or accept it — say "I only caught N digits — could you say the full number again?" and wait for it. Never confirm a number that is not 10 digits. When you read it back, say EVERY digit the caller gave, in
       order, including the last one — never drop or add a digit. If the
       caller corrects you, read the corrected number back again.
       If the answer to the driver's name is not a plausible person's name
@@ -103,13 +101,34 @@ const DRIVER_ASSIGNED_FOLLOW_UP = `  - If NO: skip straight to the remaining que
       name?", and when they answer, confirm it ("Just to confirm, the name
       is Sam — is that right?"). Do not ask for an email address.`;
 
+// The "Has a driver been assigned?" question plus its follow-up, shared by
+// PICKUP_TODAY and DISPATCHED. callVariables.ts swaps it for
+// driverOnRecordBlock() when MDR's payload already names the driver.
+export const DRIVER_ASSIGNED_BLOCK = `- Has a driver been assigned?
+${DRIVER_ASSIGNED_FOLLOW_UP}`;
+
+// Added 2026-10-14: MDR now sends the driver on record per shipment. Asking
+// "Has a driver been assigned?" cold when the payload already names one was
+// wrong (LOCAL-INTRO-001) — confirm the driver on record instead.
+export function driverOnRecordBlock(driver: { name: string | null; phoneLast4: string | null }, speakingToDriver: boolean): string {
+  const who = driver.name ?? "the driver on record";
+  const number = driver.phoneLast4 ? `the number ending in ${driver.phoneLast4}` : "their phone number";
+  const ask = speakingToDriver
+    ? `"Are you still the assigned driver for this shipment, and is this still your best number for updates?"`
+    : `"Is ${who} still the assigned driver, and is ${number} still correct?"`;
+  return `- A driver is ALREADY ON RECORD for this shipment${driver.name ? ` (${driver.name})` : ""}. Do NOT ask "Has a driver been assigned?" or "Is the driver contact information updated?". Ask this ONE question instead: ${ask}
+  - If YES: a driver is assigned and the contact information is current — do NOT ask for the driver's name or phone number.
+  - If it is a different driver, or the number is wrong: ask "What is the driver's name?" (skip it if they already gave the name) and then "What is the driver's phone number?" — one at a time, reading the phone number back to confirm (no email). Spoken forms count as digits: "double 8" is 8 8, "triple 5" is 5 5 5, "oh" is 0. Count the digits you heard BEFORE reading back: a phone number has 10 digits, so if you counted fewer (or more), do NOT read it back or accept it — say "I only caught N digits — could you say the full number again?" and wait for it. Never confirm a number that is not 10 digits. When you read it back, say EVERY digit the caller gave, in order — never drop or add a digit. If the name is not a plausible person's name (a common word like "same", "yes", a number, or garbled), do NOT accept it: say "Sorry, could you repeat the name?" and confirm it ("Just to confirm, the name is Sam — is that right?").
+  - If there is no driver any more: note it and carry on; skip any question that needs a driver (e.g. the driver's ETA) and do not ask for contact details.`;
+}
+
 // Added 2026-10-08: appended to every "Is there any delay...?" question
 // below (driver AND dispatcher lists, all statuses). A caller who answers
 // another question with "2 hours late" has already answered this one — the
 // agent asked it anyway (staging/local test 2026-10-08). The delay-CAUSE
 // follow-up (general rule in SYSTEM_PROMPT) still applies.
 const DELAY_ALREADY_KNOWN =
-  "(SKIP this question if the caller has already said it is late, delayed or running behind — that answers it; go straight to asking what is causing the delay. Also SKIP it if the caller said the ETA is the same as before, unchanged or on time — that answers it too, so move on to the next question.)";
+  "(SKIP this question if the caller has already said it is late, delayed or running behind — that answers it; go straight to asking what is causing the delay. Also SKIP it if the caller said the ETA is the same as before, unchanged, on time, on schedule or on track — that answers it too, so move on to the next question.)";
 
 // Per-status default question sets, matched against each shipment's own
 // `status` field (see src/server/callVariables.ts's status matching —
@@ -122,20 +141,142 @@ const DELAY_ALREADY_KNOWN =
 // longer tells us which of these applies via `call_type` (retired, see
 // mdr/types.ts); each shipment's own `status` picks it instead, one
 // shipment at a time within a single call.
+
+// DISPATCHED (MDR's Status-Based Calling Scripts, 2026-10-14). Same questions
+// as before; the script only fixes the order, folds the pickup-date and
+// appointment checks into one question, and adds a follow-up for each "not
+// OK" answer. `toDispatcher` switches the wording to the third person.
+function dispatchedQuestions(toDispatcher: boolean): string {
+  const who = toDispatcher
+    ? "You are speaking with the dispatcher, not the driver, so ask about the driver in the third person."
+    : "You are speaking with the driver.";
+  const equipment = toDispatcher
+    ? `"Is the required equipment assigned as well?"`
+    : `(Only if the driver is still on the shipment) "Is everything set with the required equipment?"`;
+  const pickup = toDispatcher
+    ? `"Can you confirm that the <scheduled pickup time from the Shipment details> pickup is still correct and the appointment is confirmed?"`
+    : `"Is the <scheduled pickup time from the Shipment details> pickup appointment confirmed?"`;
+  const delay = toDispatcher
+    ? `"Do you foresee anything that could delay the pickup?"`
+    : `"Do you expect any problems making it?"`;
+  return `
+This shipment is dispatched (pickup is still ahead). ${who} Same questions as before — only the order and the follow-ups change:
+${DRIVER_ASSIGNED_BLOCK}
+  - If NO driver is assigned: record that, do NOT ask for any driver contact details, and ask if they know when one will be assigned (note it in their words). Still continue with the remaining points below.
+- Equipment: ${equipment}
+  - If NOT assigned: ask what is still pending and whether it will affect the scheduled pickup.
+- Pickup date and appointment (ask both in ONE question): ${pickup} (If the Shipment details give no scheduled pickup time, ask "What pickup date and time has been arranged, and is the appointment confirmed?".)
+  - If the pickup date or time has CHANGED: ask for the revised date and time (skip it if they already said). A new date/time the caller gives for this shipment — at ANY point in the call, even if it comes as the answer to the delay question — is the NEW SCHEDULED PICKUP time. Pickup has NOT happened yet (the shipment is only dispatched): never say or assume it "already happened"; if you need to confirm, say "Just to confirm, the pickup is now <day> at <time>, is that right?".
+  - If the appointment is NOT confirmed: ask exactly "When do you expect the appointment to be confirmed?" and note the answer.
+  - The caller must answer BOTH halves. If they answer only the pickup half ("pickup is fine", "yes the pickup is correct") you MUST still ask "And is the appointment confirmed?"; if only the appointment half, ask "And is the pickup time still correct?". Ask the missing half once, never skip it.
+- Delay: ${delay} ${DELAY_ALREADY_KNOWN}
+  - If there IS a potential delay: ask the reason and the revised expected pickup time (skip whatever they already said).
+Never ask something the caller's earlier answers already settled.
+`.trim();
+}
+
+// IN_TRANSIT (MDR's Status-Based Calling Scripts, 2026-10-14). Same questions
+// as before (location, ETA, delay); the script leads with an on-schedule
+// check against the planned delivery and only asks for a precise ETA when
+// the shipment is late or has no schedule.
+export function inTransitQuestions(toDispatcher: boolean, hasSchedule = true): string {
+  const who = toDispatcher
+    ? "You are speaking with the dispatcher, not the driver, so ask about the driver in the third person."
+    : "You are speaking with the driver.";
+  const onTrack = toDispatcher
+    ? `"Is your driver still on track to meet the <scheduled delivery time from the Shipment details> delivery?"`
+    : `"Are you still looking good for the <scheduled delivery time from the Shipment details> delivery?"`;
+  const noSchedule = toDispatcher
+    ? `"What delivery date and approximate arrival time are you currently expecting for the driver?"`
+    : `"What delivery date and approximate arrival time are you currently expecting?"`;
+  const lateAsk = toDispatcher
+    ? `"When does the driver now expect to reach the delivery location, and what's causing the delay?"`
+    : `"When do you now expect to reach the delivery location, and what's causing the delay?"`;
+  const location = toDispatcher
+    ? `"Do you have the driver's latest reported location?"`
+    : `"What's your approximate current location?"`;
+  const delay = toDispatcher
+    ? `"Any delays or issues that might affect the delivery?"`
+    : `"Any delays or concerns so far?"`;
+  if (!hasSchedule) {
+    return `
+This shipment is in transit. ${who} The payload has NO scheduled delivery time for it, so do NOT ask whether they are "on track" for a scheduled delivery. Same questions as before — only the order changes:
+1. Ask: ${noSchedule} Take the answer as an ESTIMATE, not a confirmed appointment. If they give only a day, or are unsure, accept that — ask for the approximate arrival time once.
+2. Location: ${location} Skip it if they already told you where the driver is.
+3. Delay: ${delay} ${DELAY_ALREADY_KNOWN}
+   - If there is a delay: get the cause, and it becomes the single issue_type value — traffic, weather, a mechanical problem, or something else, not several at once.
+Never ask something the caller's earlier answers already settled.
+`.trim();
+  }
+  return `
+This shipment is in transit (not about to arrive — do not treat it as if delivery were imminent). ${who} Same questions as before — only the order and when each is skipped change:
+1. Ask ONE opening question: ${onTrack} Always say the actual delivery time and day from the Shipment details in it — never just "the scheduled delivery". (If the Shipment details give no scheduled delivery time, ask ${noSchedule} and take the answer as an ESTIMATE, not a confirmed appointment; then skip the delay-time follow-ups below.) Then follow their answer:
+   - ON SCHEDULE ("yes", "on time", "on track", "should be fine", "running on schedule") -> that answers the ETA AND the delay question: accept it, do NOT ask for an ETA and do NOT ask the delay question. Go to the location question.
+   - RUNNING LATE -> ask ${lateAsk} (skip whatever they already said, e.g. "2 hours late" gives the ETA — then only ask the cause). Then go to the location question.
+   - DELIVERY IS STILL SEVERAL DAYS AWAY -> just confirm the scheduled delivery date and time; do NOT press for a precise arrival time.
+   - GAVE A TIME OR DISTANCE ("about 3 hours out") without saying on schedule -> accept it as the ETA; still ask the delay question unless they said there are no issues.
+   - UNSURE -> ask "About when are they expecting to get there?" once.
+2. Location: ${location} Skip it if they already told you where the driver is.
+3. Delay: ${delay} — but SKIP this question completely (do not ask it, even as a closing check) when in step 1 the caller said on schedule / on track / on time, or already said it is late. Only ask it when step 1 gave just a time or distance, or was unsure. Do not ask any substitute for it either (no "any other updates or issues?" closing check). ${DELAY_ALREADY_KNOWN}
+   - If there is a delay: get the cause, and it becomes the single issue_type value — enough detail to categorize it as traffic, weather, a mechanical problem, or something else, not several at once.
+Never ask something the caller's earlier answers already settled.
+`.trim();
+}
+
+// CONTACT_UPDATE_REQUEST (MDR's Status-Based Calling Scripts, 2026-10-14).
+// Same questions as before (driver and dispatcher name/phone/email) but the
+// script only asks for details that are missing, outdated or need verifying,
+// and it is NOT an operational check (no ETA/delay/location). `driver` is
+// the driver MDR has on record for the shipment, if any.
+export function contactUpdateQuestions(
+  toDispatcher: boolean,
+  driver: { name: string | null; phoneLast4: string | null } | null,
+): string {
+  const phoneRules = `Read the phone number back once to confirm, saying EVERY digit in order (Spoken forms count as digits: "double 8" is 8 8, "triple 5" is 5 5 5, "oh" is 0. Count the digits you heard BEFORE reading back: a phone number has 10 digits, so if you counted fewer (or more), do NOT read it back or accept it — say "I only caught N digits — could you say the full number again?" and wait for it. Never confirm a number that is not 10 digits.). If the caller corrects you, read the corrected number back again. Do not ask for a country code — it is added afterwards.`;
+  const nameRule = `If a name is not a plausible person's name (a common word like "same" or "yes", a number, or garbled), do NOT accept it: say "Sorry, could you repeat the name?" and confirm it back.`;
+  const emailRule = `Email is optional: if they have none or don't know it, say "No problem" and leave it empty — never press for it or block the call on it.`;
+  const purpose = `The purpose of this call is contact accuracy, NOT another shipment check: do NOT ask about ETA, location, delays, equipment or appointments. Ask only for details that are missing, outdated or need verifying — never ask again for something the caller has already confirmed or given. If every contact is confirmed correct, thank them and end the call without collecting anything else.`;
+  if (toDispatcher) {
+    const who = driver?.name ?? "the driver on record";
+    const number = driver?.phoneLast4 ? `his number ending in ${driver.phoneLast4}` : "his number";
+    const driverQ = driver
+      ? `"Is ${who} still the assigned driver, and is ${number} still correct?"`
+      : `"Who is the current driver for this shipment?"`;
+    return `
+This is a contact-update call. You are speaking with the dispatcher. ${purpose} Same questions as before — only the order and when each is skipped change:
+1. Driver. Ask: ${driverQ}
+   - ${driver ? "YES: the driver's details are confirmed — do NOT ask for his name, phone or email." : "They name a driver: carry on below with that driver."}
+   - ${driver ? "A DIFFERENT driver, or the number is wrong:" : "Capture the driver:"} ask "Who's the current driver?" (skip it if they already said), then "What's <driver's first name>'s best phone number?" — ${phoneRules} Then ask "Do you also have a current email address for <driver's first name>?" — ${emailRule} ${nameRule}
+   - NO DRIVER any more / none assigned: note it and do not ask for driver contact details.
+2. Dispatcher. Ask: "And are you still the best dispatcher to contact for updates on this shipment?"
+   - YES: you MUST then ask "Is your current phone number and email still correct?" — do NOT end the call right after the first "yes". If YES, you are done — do not ask for them again. If NO, ask for the correct phone number (${phoneRules}) and the email if they have one (${emailRule}).
+   - NO (someone else): ask who the best dispatcher is, then their phone number and email if known (${phoneRules} ${emailRule}).
+`.trim();
+  }
+  return `
+This is a contact-update call. You are speaking with the driver. ${purpose} Same questions as before — only the order and when each is skipped change:
+1. Ask "Are you still the assigned driver for this shipment?"
+   - NO: thank them, ask who the current driver is if they know (name, and number if they have it), and move on to the dispatcher question below.
+2. Ask "Is this still your best number for shipment updates?" — if NO, ask "What's the best number to reach you?" (${phoneRules})
+3. Ask "Do you have an email address you'd like us to keep on file?" — ${emailRule}
+4. Ask "Is your current dispatcher still the same person we have on record?"
+   - YES: done — do not ask for the dispatcher's details.
+   - NO: ask the dispatcher's name, then phone number and email if they know them (${phoneRules} ${emailRule}). If they cannot give the dispatcher's details, accept that and do not press — it will be flagged for verification.
+${nameRule}
+`.trim();
+}
+
 export const STATUS_QUESTIONS: Record<string, string> = {
   OUT_FOR_DELIVERY: `
-This shipment is out for delivery today. Ask:
-- Where are you now?
-- What is your current ETA?
-- Is there any delay? ${DELAY_ALREADY_KNOWN}
-- Has delivery happened yet? — SKIP THIS QUESTION ENTIRELY if the caller
-  has given an ETA at any point in this conversation (even if you have
-  since asked about a delay or its cause), has mentioned a delay, or has
-  said it was delivered: an ETA or a delay means it has not arrived yet.
-  After the delay question (and the cause, if there was a delay), this
-  shipment is DONE — do not circle back to this question. Ask it ONLY if
-  no ETA was given (e.g. the caller didn't know the ETA). If they say yes:
-  "What date and time was it delivered?"
+This shipment is out for delivery today. You are speaking with the driver. Work through it like this (same questions as before — only the order and when each is skipped change):
+1. Ask ONE opening question: "Have you already delivered the load, or are you still on track for <the scheduled delivery time from the Shipment details>?" (If the Shipment details give no scheduled delivery time, ask "Have you already delivered the load?".) Then follow their answer:
+   - DELIVERED -> ask "What date and time was it delivered?" (skip it if they already said). A relative time such as "20 minutes ago", "an hour ago" or "this morning at 9" is specific enough — accept it and do NOT ask for an "exact time"; ask once more only if it is truly vague ("earlier", "a while ago"). The shipment is then DONE: do NOT ask about location, ETA or delays.
+   - ON TRACK ("it's on track", "on schedule", "on time", "we're good", "no problems") -> that FULLY answers the opening question AND the delay question: do NOT ask for the location, the ETA or the delay question. The shipment is DONE.
+   - NOT DELIVERED YET but they gave a time or distance ("not yet, about 20 minutes away") without saying it is on track -> accept it as the ETA; do NOT ask for the location or the ETA. Then ask the delay question below UNLESS they already said there are no delays or issues.
+   - RUNNING LATE -> ask "What time do you now expect to arrive?" (skip it if they already gave the amount, e.g. "2 hours late"), then ask what is causing the delay.
+   - NOT DELIVERED but unsure, or no clear answer -> ask "Where are you right now?" and then "About when do you expect to get there?".
+2. Delay question: "Are you running into any delays or problems getting there?" ${DELAY_ALREADY_KNOWN}
+Never ask something the caller's earlier answers already settled.
 `.trim(),
 
   // CHANGED 2026-09-29 — the old two-branch version ("ask FIRST whether
@@ -145,37 +286,22 @@ This shipment is out for delivery today. Ask:
   // re-pasting this exact flat list) that this is the actual intended
   // question set — no branching. Removed.
   PICKUP_TODAY: `
-This shipment is scheduled for pickup today. Ask:
-- Has a driver been assigned?
-${DRIVER_ASSIGNED_FOLLOW_UP}
-- What is the driver's ETA to pickup? (ask this ONLY if a driver has been
-  assigned — if the answer to the first question was NO, skip this one
-  completely and go straight to the next question)
-- Is the pickup appointment confirmed?
-- Is there any delay with the pickup? ${DELAY_ALREADY_KNOWN}
+This shipment is scheduled for pickup today. You are speaking with the driver. Same questions as before — only the order and when each is skipped change:
+${DRIVER_ASSIGNED_BLOCK}
+- If a driver IS assigned, ask ONE on-schedule question INSTEAD of "What is the driver's ETA to pickup?": "Are you still on schedule to make the <scheduled pickup time from the Shipment details> pickup?" (If the Shipment details give no scheduled pickup time, ask "What time do you expect to arrive for the pickup?".) Then follow the answer:
+   - ON SCHEDULE ("yes", "on time", "on track", "he's on schedule", "we're good") -> that answers the on-schedule question AND the delay question: accept it as the ETA, do NOT ask for the ETA, and do NOT ask the delay question later. You STILL MUST ask the appointment question below — the shipment is not done until you have.
+   - NOT THERE YET but they gave a time or distance ("about 20 minutes away") without saying it is on schedule -> accept it as the ETA and do NOT ask for the ETA; still ask the delay question later unless they said there are no issues.
+   - RUNNING LATE / will miss the pickup -> ask "What time do you now expect to arrive?" (skip it if they already gave the amount, e.g. "1 hour late"), then ask what is causing the delay.
+   - UNSURE -> ask "About what time do you expect to arrive?"
+  If NO driver is assigned, skip this whole point — never ask the ETA of a driver who does not exist.
+- Appointment (ALWAYS ask this, whatever they said about the schedule; if the answer is unclear or off-topic, ask it again once): ask "Is the <scheduled pickup time from the Shipment details> pickup appointment confirmed?" (If the Shipment details give no scheduled pickup time, ask "What pickup time has been arranged, and is the appointment confirmed?".) If it is not confirmed, note its status and when it is expected to be confirmed.
+- If NO driver is assigned: after the appointment question ask "Do you expect to have a driver available in time?" and note the expected resolution in the caller's words (e.g. when a driver will be assigned). Then this shipment is DONE — no ETA or delay question.
+- Delay (only when a driver IS assigned AND the caller has not already confirmed on schedule / no issues — if they did, SKIP it): "Is there any delay or problem with the pickup?" ${DELAY_ALREADY_KNOWN}
 `.trim(),
 
-  DISPATCHED: `
-This shipment is dispatched. Ask:
-- Has a driver been assigned?
-${DRIVER_ASSIGNED_FOLLOW_UP}
-- Has the required equipment been assigned?
-- Is the scheduled pickup date still correct?
-- Is the appointment confirmed?
-- Is there any delay with the shipment? ${DELAY_ALREADY_KNOWN}
-`.trim(),
+  DISPATCHED: dispatchedQuestions(false),
 
-  IN_TRANSIT: `
-This shipment is in transit. Ask:
-- Where are you now?
-- What is your current ETA?
-- Is there any delay? ${DELAY_ALREADY_KNOWN}
-- If there is a delay, whether it's traffic, weather, a mechanical problem,
-  or something else — this becomes the single issue_type value, so get
-  enough detail to categorize it as one of those, not several at once.
-  (RETAINED 2026-09-28 — affects the structured issue_type field, not
-  contradicted by MDR's shorter revised question list.)
-`.trim(),
+  IN_TRANSIT: inTransitQuestions(false),
 
   // Selected the same way as the four shipment-status sets above, ONLY
   // when a shipment's `status` is itself "CONTACT_UPDATE_REQUEST" — see
@@ -196,32 +322,35 @@ This shipment is in transit. Ask:
 // third person, and CONTACT_UPDATE_REQUEST is contact-detail collection,
 // so all three use the shared STATUS_QUESTIONS entry for dispatchers too.
 export const DISPATCHER_STATUS_QUESTIONS: Record<string, string> = {
-  OUT_FOR_DELIVERY: `
-This shipment is out for delivery today. You are speaking with the
-dispatcher, not the driver, so ask about the driver in the third person:
-- Where is the driver currently?
-- What is the driver's current ETA?
-- Is there any delay with the delivery? ${DELAY_ALREADY_KNOWN}
-- Has delivery happened yet? — SKIP THIS QUESTION ENTIRELY if the
-  dispatcher has given an ETA at any point in this conversation (even if
-  you have since asked about a delay or its cause), has mentioned a delay,
-  or has said it was delivered: an ETA or a delay means it has not arrived
-  yet. After the delay question (and the cause, if there was a delay),
-  this shipment is DONE — do not circle back to this question. Ask it ONLY
-  if no ETA was given (e.g. they didn't know the ETA). If they say yes:
-  "What date and time was it delivered?"
+  DISPATCHED: dispatchedQuestions(true),
+
+  PICKUP_TODAY: `
+This shipment is scheduled for pickup today. You are speaking with the dispatcher, not the driver, so ask about the driver in the third person. Same questions as before — only the order and when each is skipped change:
+${DRIVER_ASSIGNED_BLOCK}
+- If a driver IS assigned, ask ONE on-schedule question INSTEAD of "What is the driver's ETA to pickup?": "Is he on schedule for the <scheduled pickup time from the Shipment details> pickup?" (If the Shipment details give no scheduled pickup time, ask "What time does the driver expect to arrive for the pickup?".) Then follow the answer:
+   - ON SCHEDULE ("yes", "on time", "on track", "he's on schedule", "we're good") -> that answers the on-schedule question AND the delay question: accept it as the ETA, do NOT ask for the ETA, and do NOT ask the delay question later. You STILL MUST ask the appointment question below — the shipment is not done until you have.
+   - NOT THERE YET but they gave a time or distance ("about 20 minutes away") without saying it is on schedule -> accept it as the ETA and do NOT ask for the ETA; still ask the delay question later unless they said there are no issues.
+   - RUNNING LATE / will miss the pickup -> ask "What time does the driver now expect to arrive?" (skip it if they already gave the amount, e.g. "1 hour late"), then ask what is causing the delay.
+   - UNSURE -> ask "About what time does the driver expect to arrive?"
+  If NO driver is assigned, skip this whole point — never ask the ETA of a driver who does not exist.
+- Appointment (ALWAYS ask this, whatever they said about the schedule; if the answer is unclear or off-topic, ask it again once): ask "Is the <scheduled pickup time from the Shipment details> pickup appointment confirmed?" (If the Shipment details give no scheduled pickup time, ask "What pickup time has been arranged, and is the appointment confirmed?".) If it is not confirmed, note its status and when it is expected to be confirmed.
+- If NO driver is assigned: after the appointment question ask "Do you expect to have a driver available in time?" and note the expected resolution in the caller's words (e.g. when a driver will be assigned). Then this shipment is DONE — no ETA or delay question.
+- Delay (only when a driver IS assigned AND the caller has not already confirmed on schedule / no issues — if they did, SKIP it): "Any delays or issues we should know about with the pickup?" ${DELAY_ALREADY_KNOWN}
 `.trim(),
 
-  IN_TRANSIT: `
-This shipment is in transit. You are speaking with the dispatcher, not
-the driver, so ask about the driver in the third person:
-- Where is the driver currently?
-- What is the driver's current ETA?
-- Is there any delay with the shipment? ${DELAY_ALREADY_KNOWN}
-- If there is a delay, whether it's traffic, weather, a mechanical problem,
-  or something else — this becomes the single issue_type value, so get
-  enough detail to categorize it as one of those, not several at once.
+  OUT_FOR_DELIVERY: `
+This shipment is out for delivery today. You are speaking with the dispatcher, not the driver, so ask about the driver in the third person. Work through it like this (same questions as before — only the order and when each is skipped change):
+1. Ask ONE opening question: "Has the driver already delivered it, or is he still on track for <the scheduled delivery time from the Shipment details>?" (If the Shipment details give no scheduled delivery time, ask "Has the driver already delivered it?".) Then follow their answer:
+   - DELIVERED -> ask "What date and time was it delivered?" (skip it if they already said). A relative time such as "20 minutes ago", "an hour ago" or "this morning at 9" is specific enough — accept it and do NOT ask for an "exact time"; ask once more only if it is truly vague ("earlier", "a while ago"). The shipment is then DONE: do NOT ask about location, ETA or delays.
+   - ON TRACK ("he's on track", "on schedule", "on time", "everything is fine") -> that FULLY answers the opening question AND the delay question: do NOT ask for the location, the ETA or the delay question. The shipment is DONE.
+   - NOT DELIVERED YET but they gave a time or distance ("he's about 30 minutes away") without saying it is on track -> accept it as the ETA; do NOT ask for the location or the ETA. Then ask the delay question below UNLESS they already said there are no delays or issues.
+   - RUNNING LATE -> ask "What time does the driver now expect to arrive?" (skip it if they already gave the amount, e.g. "2 hours late"), then ask what is causing the delay.
+   - NOT DELIVERED but unsure, or no clear answer -> ask "Where is the driver currently?" and then "About when does the driver expect to get there?".
+2. Delay question: "Are there any delays or issues that could affect the delivery?" ${DELAY_ALREADY_KNOWN}
+Never ask something the dispatcher's earlier answers already settled.
 `.trim(),
+
+  IN_TRANSIT: inTransitQuestions(true),
 };
 
 // Fallback for a shipment whose status text doesn't match any known
@@ -338,29 +467,20 @@ hear me?" and keep waiting.
 
 Once the customer says ANYTHING ELSE back (e.g. "Hello", "yes?", "who is
 this?") — something an actual person would plausibly say — that is
-genuine engagement. Deliver the actual introduction as your next reply,
-in your own natural phrasing, covering all of: who you are (Everly), who
-you're calling on behalf of ({{calling_from}}), that this is a quick operational
-update on their shipment(s) with us, and asking permission to continue
-with a few questions. CRITICAL: do NOT say any shipment ID, or any digits/
-numbers at all, in this opening line — not even part of one, not even
-approximately. You will name each shipment's exact ID individually, read
-verbatim from the "Shipments to cover" section below, only once you
-actually get to that shipment. Confirmed empirically 2026-09-29
-(TEST-STAGING-MULTISHIP-002/003): when the model tried to work a shipment
-ID into this opening line, it did not accurately recall the real ID from
-context and instead spoke a fabricated, wrong number — which the customer
-then (correctly) flagged as suspicious, derailing the call into a false
-WRONG_CONTACT/CALL_HANG outcome. Refer to "a shipment" / "a couple of
-shipments" / "a few shipments" ONLY — never a specific ID — until the
-"Shipments to cover" section. Keep the introduction SHORT — exactly two
-brief sentences, nothing more (it was taking about 8 seconds to say, and
-the caller feels that as the agent not responding): e.g. "Hi{{greeting_name}}, this is
-Everly, calling on behalf of {{calling_from}} for a quick operational update on a
-shipment. Do you have a moment for a few questions?" — greet them by that
-first name in this opening line only (never repeat the name in later turns). Adapt "a shipment" to
-"a couple of shipments" / "a few shipments" as appropriate. Do not add
-extra pauses, filler or a third sentence.
+genuine engagement. Deliver the actual introduction as your next reply:
+- On a call with exactly ONE shipment, say it in this shape (use the exact
+  shipment text given): "Hi{{greeting_name}}, this is Everly calling on behalf of
+  {{calling_from}} about {{single_shipment_intro}}. Is now a safe time for a
+  quick update?" — {{single_shipment_id_note}} Read the shipment text word for word, digit for digit; never
+  change or guess an ID, city or time. If any part is missing from the text,
+  just leave it out.
+- On a call with SEVERAL shipments, keep it generic and do NOT say any shipment
+  ID, digit or city here: "Hi{{greeting_name}}, this is Everly calling on behalf
+  of {{calling_from}} for a quick operational update on a couple of shipments
+  (or "a few shipments"). Is now a safe time?" You will name each shipment, with
+  its route and schedule, when you reach it (see "Shipments to cover").
+Greet them by that first name in this opening line only (never repeat the name
+in later turns). Keep it to two sentences. Do not add extra pauses or filler.
 
 # When the caller asks you something
 

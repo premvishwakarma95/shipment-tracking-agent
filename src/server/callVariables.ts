@@ -1,6 +1,15 @@
 import type { CallRequestDoc } from "../db/models/CallRequest.js";
 import { describeUtcNow } from "./timeFormat.js";
-import { STATUS_QUESTIONS, DISPATCHER_STATUS_QUESTIONS, DEFAULT_STATUS_QUESTIONS } from "../assistant/prompt.js";
+import { formatLocation, driverOnRecord, shipmentOpening, spokenSchedule, idDigitCount } from "./shipmentFacts.js";
+import {
+  STATUS_QUESTIONS,
+  DISPATCHER_STATUS_QUESTIONS,
+  inTransitQuestions,
+  contactUpdateQuestions,
+  DEFAULT_STATUS_QUESTIONS,
+  DRIVER_ASSIGNED_BLOCK,
+  driverOnRecordBlock,
+} from "../assistant/prompt.js";
 
 // Maps a CallRequest into the flat object of every {{variable}} referenced
 // in src/assistant/prompt.ts, passed as assistantOverrides.variableValues
@@ -32,8 +41,19 @@ export function buildCallVariables(doc: CallRequestDoc): Record<string, string> 
     contact_context: contact.promptContext,
     contact_summary_note: contact.summaryNote,
     shipment_ids_text: shipments.map((s, i) => shipmentId(s, i)).join(", "),
-    shipments_block: shipments.map((s, i) => renderShipmentBlock(s, i, contact.isDispatcher)).join("\n\n"),
+    shipments_block: shipments.map((s, i) => renderShipmentBlock(s, i, contact.isDispatcher, shipments.length > 1, now, contact.isDriver)).join("\n\n"),
     shipment_wording_rule: shipmentWordingRule(shipments.length),
+    // Single shipment: the exact "about shipment …, route, scheduled …" text for
+    // the introduction. Several shipments: none (the intro stays generic and each
+    // shipment is named when the agent reaches it, see shipments_block).
+    single_shipment_id_note:
+      shipments.length === 1
+        ? `The shipment ID has ${idDigitCount(shipmentId(shipments[0]!, 0))} digits — say ALL of them, including the last one.`
+        : "",
+    single_shipment_intro:
+      shipments.length === 1
+        ? shipmentOpening(shipments[0]!, shipmentId(shipments[0]!, 0), resolveStatusKey(String(shipments[0]!.status ?? "")), now)
+        : "",
   };
 }
 
@@ -45,7 +65,7 @@ export function buildCallVariables(doc: CallRequestDoc): Record<string, string> 
 // instruction above it.
 function shipmentWordingRule(count: number): string {
   if (count === 1) {
-    return `This call covers exactly ONE shipment. Ask its questions directly, one at a time. Do NOT use ordinal or sequencing words such as "first", "second", "next", "then" or "finally" to introduce a question, do NOT say "for a different shipment", and do NOT say the shipment ID — it overrides the instruction above to say the ID. Just ask, e.g. "Where are you now?" or "What is your current ETA?".`;
+    return `This call covers exactly ONE shipment. Ask its questions directly, one at a time. Do NOT use ordinal or sequencing words such as "first", "second", "next", "then" or "finally" to introduce a question, do NOT say "for a different shipment", and do NOT repeat the shipment ID in questions (it is said once, in the introduction) — this overrides any instruction above to say the ID. Just ask, e.g. "Where are you now?" or "What is your current ETA?".`;
   }
   return `This call covers ${count} shipments. Use sequencing words such as "first", "second" or "next" only to move between shipments, never between questions within the same shipment.`;
 }
@@ -71,7 +91,27 @@ function shipmentId(shipment: ShipmentLike, index: number): string {
 // is followed far more reliably than the general rule further down the prompt.
 const PREVIOUS_CONTEXT_RULE = `USE THE PREVIOUS SUMMARY / OPEN ISSUE ABOVE for this shipment: do NOT ask the questions it already answers cold. Instead say what it states and ask whether it is still correct, e.g. "Earlier we were advised the ETA was about 2:30 PM — is that still correct?" or "Earlier there was a traffic delay — is that still the case?". If the answer changed, take the new answer (ask a normal follow-up if needed). Anything the previous summary does NOT cover, ask normally. Keep it to one short sentence per question. (On a call with several shipments, still say this shipment's ID first when you start it, then use the previous summary.)`;
 
-function renderShipmentBlock(shipment: ShipmentLike, index: number, isDispatcher: boolean): string {
+// PICKUP_TODAY / DISPATCHED: when MDR already named the driver, confirm that driver
+// instead of asking "Has a driver been assigned?" cold.
+function withDriverOnRecord(
+  questions: string,
+  statusKey: string | null,
+  driver: ReturnType<typeof driverOnRecord>,
+  speakingToDriver: boolean,
+): string {
+  if (!driver || (statusKey !== "PICKUP_TODAY" && statusKey !== "DISPATCHED")) return questions;
+  if (!questions.includes(DRIVER_ASSIGNED_BLOCK)) return questions;
+  return questions.replace(DRIVER_ASSIGNED_BLOCK, driverOnRecordBlock(driver, speakingToDriver));
+}
+
+function renderShipmentBlock(
+  shipment: ShipmentLike,
+  index: number,
+  isDispatcher: boolean,
+  multi: boolean,
+  now: Date,
+  speakingToDriver: boolean,
+): string {
   const id = shipmentId(shipment, index);
   const status = typeof shipment.status === "string" ? shipment.status.trim() : "";
 
@@ -90,13 +130,30 @@ function renderShipmentBlock(shipment: ShipmentLike, index: number, isDispatcher
     (typeof shipment.open_issue === "string" && shipment.open_issue.trim() !== "");
   const previousUse = hasPrevious ? `\n${PREVIOUS_CONTEXT_RULE}\n` : "";
 
-  const mdrQuestions = renderMdrQuestions(shipment.questions);
-  const details = renderShipmentDetails(shipment, status);
+  // MDR's own questions[] repeats "Has a driver been assigned?" — with a
+  // driver already on record that one must not be asked cold (see
+  // withDriverOnRecord), so drop it from MDR's list for PICKUP_TODAY/DISPATCHED.
+  const keyForQuestions = resolveStatusKey(status);
+  const driverKnown =
+    driverOnRecord(shipment) !== null && (keyForQuestions === "PICKUP_TODAY" || keyForQuestions === "DISPATCHED");
+  const mdrQuestions = renderMdrQuestions(shipment.questions, driverKnown, STANDARD_QUESTION_PATTERNS[keyForQuestions ?? ""]);
+  const details = renderShipmentDetails(shipment, status, now);
+  const opening = multi
+    ? `\nWhen you start this shipment, name it like this and say ALL of it — the ID (say every digit, including the last), the route and the schedule (say it naturally, once): "${shipmentOpening(shipment, id, resolveStatusKey(status), now)}".\n`
+    : "";
   const statusKey = resolveStatusKey(status);
+
+  const onRecord = driverOnRecord(shipment);
+  const defaultQuestions =
+    statusKey === "CONTACT_UPDATE_REQUEST"
+      ? contactUpdateQuestions(isDispatcher, onRecord)
+      : statusKey === "IN_TRANSIT" && !spokenSchedule(shipment, statusKey, now)
+        ? inTransitQuestions(isDispatcher, false)
+        : questionsForStatusKey(statusKey, isDispatcher);
 
   return `
 ## Shipment ${index + 1}: ${id}${status ? ` — status: ${status}` : ""}
-
+${opening}
 Shipment details (share ONLY if the caller asks about them):
 ${details}
 
@@ -107,7 +164,7 @@ Questions MDR specifically wants answered for this shipment:
 ${mdrQuestions}
 
 Default questions for this shipment's status:
-${questionsForStatusKey(statusKey, isDispatcher)}
+${withDriverOnRecord(defaultQuestions, statusKey, driverOnRecord(shipment), speakingToDriver)}
 `.trim();
 }
 
@@ -120,9 +177,29 @@ const DETAIL_FIELDS: Array<[string, string]> = [
   ["carrier_name", "Carrier"],
 ];
 
-function renderShipmentDetails(shipment: ShipmentLike, status: string): string {
+function renderShipmentDetails(shipment: ShipmentLike, status: string, now: Date): string {
   const lines: string[] = [];
   if (status) lines.push(`- Status: ${status.replace(/_/g, " ").toLowerCase()}`);
+  const sched = spokenSchedule(shipment, resolveStatusKey(status), now);
+  if (sched) lines.push(`- Scheduled ${sched.kind} time (say it like this): ${sched.phrase}`);
+  const from = formatLocation(shipment.pickup_location);
+  const to = formatLocation(shipment.delivery_location);
+  if (from && to) lines.push(`- Route: from ${from} to ${to}`);
+  else if (from) lines.push(`- Picks up in: ${from}`);
+  else if (to) lines.push(`- Delivers to: ${to}`);
+  const driver = driverOnRecord(shipment);
+  if (driver) {
+    const who = driver.name ?? "name not on record";
+    const phone = driver.phoneLast4 ? `, phone number ending in ${driver.phoneLast4}` : "";
+    lines.push(`- Driver on record: ${who}${phone}`);
+    if (driver.phoneSpoken) {
+      lines.push(
+        `- Driver's full phone number (read it out ONLY if the caller asks for it, digit by digit${
+          driver.name ? ` — it is ${driver.name}'s number` : ""
+        }; otherwise just say "ending in ${driver.phoneLast4}"): ${driver.phoneSpoken}`,
+      );
+    }
+  }
   for (const [key, label] of DETAIL_FIELDS) {
     const v = shipment[key];
     if (typeof v === "string" && v.trim()) lines.push(`- ${label}: ${v.trim()}`);
@@ -130,11 +207,28 @@ function renderShipmentDetails(shipment: ShipmentLike, status: string): string {
   return lines.length ? lines.join("\n") : "- (no extra details were provided)";
 }
 
-function renderMdrQuestions(questions: unknown): string {
+// Statuses whose default questions are now a decision tree (prompt.ts). MDR's
+// questions[] repeats the old flat defaults for that status ("Where is the driver
+// currently?", "What is the driver's current ETA?", ...); listing them again would
+// make the agent ask them regardless of the tree, so they are dropped here and only
+// genuinely extra MDR questions are kept.
+const STANDARD_QUESTION_PATTERNS: Record<string, RegExp> = {
+  PICKUP_TODAY: /\beta\b|arriv|delay|appointment (is )?confirmed|pickup appointment/i,
+  CONTACT_UPDATE_REQUEST: /driver|dispatcher|name|phone|number|email|contact/i,
+  IN_TRANSIT: /where|location|\beta\b|arrival|delay|on track|on schedule/i,
+  DISPATCHED: /equipment|pickup (date|time)|appointment|delay/i,
+  OUT_FOR_DELIVERY: /where|location|\beta\b|arrival|delay|deliver(y|ed)\b.*\b(happen|yet|complete)|has delivery/i,
+};
+
+function renderMdrQuestions(questions: unknown, dropDriverAssigned = false, dropStandard?: RegExp): string {
   if (!Array.isArray(questions) || questions.length === 0) {
     return "None beyond the default questions below.";
   }
-  return questions.map((q) => `- ${String(q)}`).join("\n");
+  const kept = questions
+    .filter((q) => !(dropDriverAssigned && /driver.*(assigned|been assigned)|assigned.*driver/i.test(String(q))))
+    .filter((q) => !(dropStandard && dropStandard.test(String(q))));
+  if (kept.length === 0) return "None beyond the default questions below.";
+  return kept.map((q) => `- ${String(q)}`).join("\n");
 }
 
 // CHANGED 2026-09-28: MDR is moving to sending `status` as an exact

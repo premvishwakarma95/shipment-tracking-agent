@@ -318,6 +318,41 @@ Use a new `mdr_call_id` per call. `[x]` = verified on a real call
   `CALL_COMPLETED` even if the extraction guesses "abrupt"; `CALL_HANG` /
   `CALL_DROPPED` payloads include `transcript` and `recording_url`.
 
+### Status-based calling scripts (2026-10-14, local calls only)
+
+OUT_FOR_DELIVERY, PICKUP_TODAY, DISPATCHED, IN_TRANSIT and
+CONTACT_UPDATE_REQUEST each have a driver and a dispatcher version. Payload
+carries `pickup_location`, `delivery_location`, `driver`. Dates must be ahead
+of the current UTC time.
+
+- [x] **TC-ST-01 intro** — names shipment ID (all digits), route and scheduled
+  pickup/delivery time before the first question.
+- [x] **TC-ST-02 driver on record** — "Is Jim still the assigned driver, and is
+  the number ending in 2525 still correct?"; yes -> `driver_confirmed` true,
+  no contact questions; different driver -> `driver_confirmed` false + name/phone.
+- [x] **TC-ST-03 OUT_FOR_DELIVERY** — delivered (relative time accepted), on
+  track (nothing else asked), distance only (ETA + delay question), late
+  (cause), unsure (location then ETA).
+- [x] **TC-ST-04 PICKUP_TODAY** — on schedule / distance / late / no driver
+  (`open_issue`) / appointment always asked; `eta` from `pickup_date`.
+- [x] **TC-ST-05 DISPATCHED** — all yes; equipment not assigned; pickup moved
+  (revised ETA, never "already happened"); half answer asks the other half;
+  appointment expected time -> `open_issue`; no driver; driver version.
+- [ ] **TC-ST-06 DISPATCHED retest after 2026-10-14 fixes** — Friday 10 AM
+  change, "Pickup is fine", "not confirmed, by noon", no driver (no escalation).
+- [x] **TC-ST-07 IN_TRANSIT** — on schedule (no ETA/delay question), late
+  (cause), several days out, driver version, no scheduled time (asks expected
+  date/time, stored as `eta` estimate).
+- [x] **TC-ST-08 CONTACT_UPDATE_REQUEST** — dispatcher all confirmed (3
+  questions, contact fields null); changed driver (name, phone read back,
+  optional email); new dispatcher; no driver on record; driver all yes;
+  driver new number; dispatcher unknown -> `open_issue`.
+- [ ] **TC-ST-09 spoken phone digits** — "double 8 7 double 1 1 0 1 0 2": the
+  agent counts digits and re-asks instead of confirming 9 digits.
+- [x] **TC-ST-10 silence mid-call** — stays `CALL_COMPLETED`, summary mentions
+  the silence.
+- [ ] **TC-ST-11 staging run** of all five statuses after deploy.
+
 ## Known gaps (don't re-file)
 
 - No automated test suite yet — all of the above are manual/curl-driven.

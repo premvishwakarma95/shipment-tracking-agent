@@ -79,7 +79,11 @@ others null:
 - "late": the caller said how late or delayed it is ("2 hours late", "30
   minutes behind", "delayed by 3 hours"). Set eta_offset_minutes to the total
   delay in minutes (2 hours late = 120). NOT the same as "in 2 hours".
-- "same": the caller said it is unchanged ("same as before", "on time", "as
+- "early": the caller said how much EARLIER than scheduled ("10 minutes
+  early", "an hour ahead of schedule", "10 minutes before the 6 PM pickup").
+  Set eta_offset_minutes to that amount in minutes (an hour early = 60). NOT
+  "late". If they instead give a clock time ("5:50"), use clock_time.
+- "same": the caller said it is unchanged ("same as before", "on time", "on track", "as
   scheduled", "no change").
 - "from_now": a time relative to NOW ("in 2 hours", "in 30 minutes"). Set
   eta_offset_minutes to that amount in minutes.
@@ -125,16 +129,27 @@ leave the structured field null — that is a mistake, not caution. null is
 ONLY for genuinely unclear, unanswered, or not-discussed items, never for
 something the caller plainly confirmed or denied. Common mappings, so
 there's no ambiguity about where a clear answer belongs:
+- CONTACT_UPDATE_REQUEST (contact accuracy only — ETA, delay, location, equipment and appointment fields all stay null): driver confirmed ("yes, still the driver and the number is correct", "still your best number") -> driver_assigned: true, driver_confirmed: true, driver_name/driver_phone/driver_email null (nothing new). A different driver or a wrong number -> driver_assigned: true, driver_confirmed: false, and the new driver_name / driver_phone / driver_email exactly as given (email null if they have none). No driver -> driver_assigned: false. When a DRIVER confirms their own number, driver_confirmed: true; a new number from the driver -> driver_confirmed: false with driver_phone. A dispatcher who confirms they are still the best contact with correct details -> dispatcher_name/dispatcher_phone/dispatcher_email ALL stay null (never copy the name the agent used to greet the caller, or any detail the caller did not newly give); a new or different dispatcher (or a corrected phone/email) -> dispatcher_name / dispatcher_phone / dispatcher_email as given. If the caller could not give the other party's details (e.g. the driver cannot name the dispatcher), set open_issue to say those details need verification (e.g. "Dispatcher details could not be provided by the driver; needs dispatcher verification.").
+- driver_assigned and driver_confirmed come ONLY from the driver questions below actually being asked and answered (PICKUP_TODAY, DISPATCHED). For IN_TRANSIT, OUT_FOR_DELIVERY and any other status where no driver question was asked, both stay null — never infer them from the driver being named in the call or from the caller answering as the driver (CONTACT_UPDATE_REQUEST has its own driver questions, see the line above).
 - "Has a driver been assigned?" -> Yes/No -> driver_assigned: true/false
+- "Is <name> still the assigned driver, and is the number ending in … still correct?" (or, to a driver, "Are you still the assigned driver…?") -> Yes -> driver_assigned: true AND driver_confirmed: true (leave driver_name/driver_phone null — nothing new was given); a different driver or a wrong number ("No, it's Michael", "that number is old") -> driver_assigned: true, driver_confirmed: FALSE (never null) and the new name/phone in driver_name/driver_phone; "no driver any more" -> driver_assigned: false, driver_confirmed: null
 - "Is the driver contact information updated?" -> Yes -> driver_confirmed: true; No -> driver_confirmed: false. If no driver was assigned (or the question was never asked), driver_confirmed MUST be null.
 - When the caller gave a driver's name and phone number because the contact information was NOT updated -> driver_name / driver_phone. driver_phone is written EXACTLY as the digits the caller gave (and read back), e.g. "555 123 4567" — include a leading "+" and country code ONLY if the caller actually said one (e.g. "+91 98765 43210"). Do NOT add a country code yourself, and never prefix "+1": a country code is added afterwards by the system. Leave driver_email null (email is not asked in this flow).
+- "Are you / Is he still on schedule for the <time> pickup?" -> on schedule / on time / "about 20 minutes away" -> eta_kind "same" (or "from_now" for "about 20 minutes away"), delay: false; running late / will miss it -> delay: true with eta/eta_kind from what they said
+- "Do you expect to have a driver available in time?" (no driver assigned) -> driver_assigned: false, and open_issue = what the caller said about the missing driver and when one is expected (e.g. "No driver assigned yet; expected to be assigned by 9 AM"); delay stays null unless stated
 - "Has the required equipment been assigned?" -> Yes/No -> equipment_assigned: true/false
-- "Is the scheduled pickup date still correct?" -> Yes/No -> scheduled_pickup_date_correct: true/false
+- "Is the scheduled pickup date still correct?" / "Can you confirm the <time> pickup is still correct and the appointment is confirmed?" -> pickup still correct: yes -> scheduled_pickup_date_correct: true; the pickup date/time changed -> scheduled_pickup_date_correct: false AND the revised date/time as the ETA (eta_kind "explicit" with a date, "clock_time" for a bare time, "late" for "an hour later") — for DISPATCHED the ETA means the expected PICKUP time. A combined answer ("yes, that's correct") answers both the pickup and the appointment halves.
+- DISPATCHED: when the caller says WHEN the appointment will be confirmed ("probably by noon", "on the 16th at 2 PM"), that is NOT an ETA and NOT a delay — put it in open_issue (e.g. "Appointment not confirmed yet; expected to be confirmed by noon") and leave eta/eta_kind null unless they separately gave a revised PICKUP time or a delay. A DISPATCHED shipment has not been picked up: pickup_completed and pickup_completed_at stay null unless the caller clearly says the truck already picked the load up; a changed pickup time ("it moved to Friday at 10 AM") is a revised pickup (scheduled_pickup_date_correct false + the ETA), never a completed pickup.
+- DISPATCHED, equipment not assigned -> equipment_assigned: false and open_issue = what is still pending and whether it affects the pickup. DISPATCHED, no driver assigned -> driver_assigned: false, open_issue = when a driver is expected, if said.
+- appointment_status comes ONLY from the caller's own clear answer to the appointment question ("Is the 6 PM pickup appointment confirmed?"). Never infer it from other answers (no driver, on schedule, "about 20 minutes away", an unclear or off-topic reply) — if the appointment question was not clearly answered, appointment_status is null.
 - "Is the appointment confirmed?" -> Yes -> appointment_status: "CONFIRMED"; a clear No/not yet -> "NOT_CONFIRMED"
 - "Is there any delay?" -> Yes/No -> delay: true/false (and delay_reason/delay_minutes/issue_type if given). If the caller said the ETA is "on time" / "as scheduled" -> delay: false; if they only said "same as before" / "unchanged" without mentioning delay, leave delay null (it was not asked). If delay was NEVER asked about or mentioned for that shipment (e.g. it was already delivered, or the call ended first), delay MUST be null — not false. "No delay" is only recorded when the caller actually said so; never infer it from the shipment being delivered or on time.
+- If the caller's stated cause is garbled, nonsense or not a real reason (e.g. "issue process", "red") and was never clarified, delay_reason and issue_type are null — say in call_summary that the cause was unclear.
 - A stated cause of a delay -> delay_reason: (the caller's own words) AND issue_type: exactly one of "traffic", "weather", "mechanical", "other" (the single closest category, never several)
+- "Have you/Has the driver already delivered it, or still on track for <time>?" -> delivered -> delivery_completed: true (+ delivery_completed_at if a time was given; leave current_location/eta/delay null if they were not asked or stated); "on track" / "on schedule" / "on time" -> delivery_completed: false, eta_kind "same", delay: false; "not yet, about 20 minutes away" -> delivery_completed: false, eta_kind "from_now" (20); running late -> delivery_completed: false, delay: true with eta/eta_kind from what they said
 - "Has delivery/pickup happened yet?" -> Yes/No -> delivery_completed / pickup_completed: true/false. If that was NEVER asked or stated for a shipment (e.g. a dispatched shipment, where pickup/delivery was not discussed), delivery_completed and pickup_completed MUST be null — never false, never inferred from the shipment's status.
 - A stated time of delivery ("delivered at 2 PM", "an hour ago", "yesterday 4 PM") -> delivery_completed_at (timestamp format below); only when delivery_completed is true, otherwise null
+- IN_TRANSIT "Are you / Is the driver still on track for the <time> delivery?" -> on track / on schedule / "should be fine" -> eta_kind "same", delay: false, delivery_completed: false; running late -> delay: true with eta/eta_kind from what they said; no scheduled time and the caller gave an expected arrival -> eta from it (an estimate). Several days away and not asked for an arrival time -> eta_kind "same", eta from the schedule only if they confirmed it, never invent a time.
 - "Where are you now?" / current location stated -> current_location: (the location)
 - "What is your current ETA?" / an ETA stated -> classify it with eta_kind and fill the matching value (see "ETA FIELDS" below) — never put free text like "5 PM" in eta
 - An ETA for delivery stated, and the caller never said it was already delivered -> delivery_completed: false (an ETA means it has not been delivered yet)
@@ -147,6 +162,7 @@ caller-stated facts, they are YOUR OWN assessment of THAT shipment's
 portion of the call, so the null rule above does NOT apply to them. Always
 fill both in for every shipment entry, even when every other field for
 that shipment came back null (e.g. a very short or unclear exchange):
+- call_summary must also say so when the caller went silent or stopped responding and the agent gave up (e.g. "The caller stopped responding after the appointment question; the call ended without an answer."), and which questions went unanswered.
 - confidence_score: a number from 0.00 to 1.00 reflecting how confident YOU
   are that you correctly understood and extracted THIS SHIPMENT's
   information (based on speech clarity and how directly questions were
@@ -174,7 +190,7 @@ escalation rule —
 - an accident
 - the driver cannot complete the move
 - the carrier says they cannot perform the load
-- a pickup/delivery appointment will definitely be missed
+- a pickup/delivery appointment will definitely be missed (the caller must say or clearly mean this; an appointment that is merely not confirmed yet, or expected to be confirmed later, is NOT enough)
 - a serious safety issue
 - the contact specifically asked for a human
 - an important answer could not be confidently understood

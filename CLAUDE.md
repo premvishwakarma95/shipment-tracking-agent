@@ -553,8 +553,8 @@ changes. All of it lives in `src/assistant/prompt.ts` unless noted.
   `[short pause]` is an eleven_v3 tag that stops the hang-up cutting off
   "Goodbye." — `[long pause]` was too long.
 - **Names/phones.** A garbled driver name ("Same", "M") is re-asked and
-  confirmed; the phone is read back digit by digit and a short number gets
-  "Is that the full number?"; a number that can't be made E.164 is kept as the
+  confirmed; the phone is read back digit by digit and a number that is not 10 digits
+  is re-asked, never confirmed (see "Status-based calling scripts"); a number that can't be made E.164 is kept as the
   spoken digits instead of `null` (`contactInfoFromFlatFields`).
 - **`recording_url` is public** (`webhookHandlers.ts` `buildPlayableRecordingUrl`
   → `src/server/recordings.ts`): `<PUBLIC_BASE_URL>/recordings/<vapi_call_id>?key=<RECORDINGS_PROXY_SECRET>`,
@@ -619,6 +619,103 @@ changes. All of it lives in `src/assistant/prompt.ts` unless noted.
   order). Genuinely unreached shipments are still "Not discussed".
 - **MDR bearer token** (`MDR_API_AUTH_TOKEN`) for staging was replaced on
   2026-10-09 in both the local and staging-server `.env`.
+
+## Status-based calling scripts (2026-10-14, local until deployed)
+
+MDR's "Status-Based Calling Scripts": the QUESTIONS are unchanged, only the
+calling pattern is — which question to ask or skip from the payload data and
+the caller's earlier answers, per status AND per contact type (driver vs
+dispatcher). Everything is in `src/assistant/prompt.ts` (question sets) and
+`src/server/callVariables.ts` (per-shipment rendering). Because the question
+sets are rendered per call into `{{shipments_block}}`, a change to them is
+live as soon as the local server restarts; the extraction prompt
+(`resultSchema.ts`), system prompt and closing lines live in the Vapi
+assistant and need `npm run assistant:create`.
+
+- **New optional payload fields per shipment:** `pickup_location`,
+  `delivery_location` (`"COLUMBIA,SC,USA"` -> spoken "Columbia, South
+  Carolina", `shipmentFacts.ts` `formatLocation`) and `driver` (`{name,
+  phone}`; an array / `drivers` is accepted, first usable entry wins). The
+  full phone is never put in the prompt — only "ending in 1234" — and is read
+  out only if the caller asks. `driverOnRecord()` in `shipmentFacts.ts`.
+- **Introduction** names the shipment ID (digit count is checked so the last
+  digit is never dropped), route and the relevant scheduled time before any
+  question: pickup for PICKUP_TODAY/DISPATCHED, delivery for OUT_FOR_DELIVERY/
+  IN_TRANSIT (`spokenSchedule`, `shipmentOpening`). Date-only schedules are
+  spoken as "Monday"; a scheduled date earlier than the call date is ignored.
+- **Driver on record.** PICKUP_TODAY/DISPATCHED no longer ask "Has a driver
+  been assigned?" cold when the payload names a driver: they ask "Is Jim
+  still the assigned driver, and is the number ending in 2525 still correct?"
+  (`driverOnRecordBlock`, swapped in by `withDriverOnRecord`). Yes ->
+  `driver_assigned` + `driver_confirmed` true, no contact questions; a
+  different driver / wrong number -> `driver_confirmed` FALSE + new
+  name/phone; no driver -> `driver_assigned` false. `driver_assigned`/
+  `driver_confirmed` stay null in statuses that never ask a driver question.
+- **OUT_FOR_DELIVERY** (driver + dispatcher wording): one opening question
+  "delivered already, or still on track for <time>?"; delivered -> ask date/
+  time only (relative times like "20 minutes ago" accepted); "on track/on
+  schedule/on time" answers the ETA AND the delay question (user decision) so
+  nothing else is asked; a time/distance without "on track" is the ETA and
+  the delay question is still asked; late -> new ETA (skipped if the amount
+  was given) + cause; unsure -> location, then ETA.
+- **PICKUP_TODAY:** driver check, then ONE on-schedule question instead of
+  "What is the driver's ETA?" ("on schedule" answers ETA + delay), then the
+  appointment question is ALWAYS asked (`appointment_status` only from a clear
+  answer, else null), no-driver branch asks "Do you expect to have a driver
+  available in time?" -> `open_issue`, delay only if a driver is assigned and
+  not already on schedule.
+- **DISPATCHED** (`dispatchedQuestions(toDispatcher)`): driver check ->
+  equipment (not assigned: what is pending / does it affect pickup) -> ONE
+  combined "pickup still correct and appointment confirmed?" (a half answer
+  gets the other half asked once; changed date -> revised date/time; not
+  confirmed -> "When do you expect the appointment to be confirmed?" goes to
+  `open_issue`, never `eta`) -> delay (reason + revised pickup time). A new
+  time the caller gives is the new scheduled PICKUP (never "already
+  happened"; `pickup_completed` stays null). For DISPATCHED the ETA fields mean
+  the expected pickup time (`etaCalc.ts` `isPickupShipment` covers PICKUP_TODAY
+  and DISPATCHED).
+- **IN_TRANSIT** (`inTransitQuestions(toDispatcher, hasSchedule)`): "still on
+  track for <day + time>?" (on schedule answers ETA + delay: no ETA/delay
+  question, and no substitute "any other updates?") -> location -> delay only
+  if the opening gave a time/distance or was unsure; late -> new arrival +
+  cause; several days away -> confirm the schedule, no precise time forced;
+  NO scheduled delivery time in the payload -> `callVariables.ts` swaps in the
+  no-schedule variant that asks "What delivery date and approximate arrival
+  time are you currently expecting?" (stored as an estimate in `eta`).
+- **CONTACT_UPDATE_REQUEST** (`contactUpdateQuestions`): contact accuracy only
+  — never ETA/location/delay/equipment/appointment. Dispatcher: driver check
+  (on record, or "Who is the current driver?" when none) -> only if wrong:
+  name, phone (read back), optional email -> "still the best dispatcher?" ->
+  "is your phone and email still correct?" (must be asked) -> done. Driver:
+  still assigned driver? -> still your best number? -> email on file? ->
+  still the same dispatcher? (if not: name/number/email; if the driver can't
+  say, `open_issue` flags the dispatcher details for verification). Email is
+  optional and never blocks completion. Confirmed contacts -> `driver_confirmed`
+  true and ALL contact fields null (the greeted contact name must not be copied
+  into `dispatcher`).
+- **Phone numbers.** "double 8" = 8 8, "triple 5" = 5 5 5; digits are counted
+  BEFORE reading back and anything that is not 10 digits is re-asked ("I only
+  caught 9 digits — could you say the full number again?") instead of being
+  read back and confirmed (a real call confirmed a 9-digit number). Country
+  code is added by the system (+1 default).
+- **ETA kinds** gained `early` ("10 minutes before the 6 PM pickup" ->
+  scheduled minus the offset) in `etaCalc.ts`/extraction.
+- **Delay questions are skipped** when the caller already said late/delayed,
+  or the ETA is same/unchanged/on time/on schedule/on track (`DELAY_ALREADY_KNOWN`);
+  distance-only answers do NOT count as on track. A garbled delay cause
+  ("issue process") is stored as null, with the summary saying it was unclear.
+- **Silence mid-call stays `CALL_COMPLETED`** (MDR's choice, 2026-10-14): when
+  the caller stops talking and the agent gives up ("Okay, I'll try again later.
+  Thank you." + "Goodbye."), the closing line decides the event type; the
+  extraction prompt requires `call_summary` to say the caller stopped
+  responding and which questions went unanswered. A CALL_HANG for this was
+  tried and reverted. Escalation `appointment will definitely be missed` needs
+  the caller to say it — an appointment that is merely unconfirmed is not enough.
+- **Open with MDR:** flat `driver_name`/`driver_number` vs nested `driver` in
+  the response; driver array handling; question-configuration acceptance #7
+  (edited/disabled/reordered questions per status/contact type); "unable to
+  reach driver" escalation; time zone of spoken/scheduled times (all UTC today);
+  a date-only schedule with "on schedule" gives `eta` at `00:00:00`.
 
 ## Wrong number vs. wrong contact (both via reportWrongContact)
 
@@ -713,7 +810,7 @@ handles both the message and the hangup.
   via MDR's own "cannot confidently understand an important answer" rule.
   Left as MDR's rule.
 - **Spoken times are treated as UTC** (see the timestamp bullet above).
-- **Manual test pass still pending for:** `IN_TRANSIT`,
-  `CONTACT_UPDATE_REQUEST`, `SECONDARY_DISPATCHER` and the non-driver
-  contact types, and the PICKUP_TODAY/multi-shipment driver-flow branches
-  (see `docs/test-cases.md`).
+- **Manual test pass still pending for:** `SECONDARY_DISPATCHER` and the
+  non-driver contact types, multi-shipment calls with the new scripts, and a
+  staging run of all five statuses (the 2026-10-14 scripts were tested on
+  local calls only; see `docs/test-cases.md`).

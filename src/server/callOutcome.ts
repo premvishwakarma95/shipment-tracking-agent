@@ -137,6 +137,10 @@ export function classifyEventType(
       // Goodbye.", endedReason assistant-ended-call) but a messy ending made
       // the extraction guess "abrupt" and the call was reported CALL_HANG.
       // Without the closing line, the abrupt flag is irrelevant too.
+      // A caller who goes silent mid-call and triggers the give-up line
+      // ("Okay, I'll try again later. Thank you." + "Goodbye.") is reported as
+      // CALL_COMPLETED on purpose (MDR's choice, 2026-10-14); the silence is
+      // described in call_summary instead.
       const reachedClosing = COMPLETION_SIGNAL.test(transcript);
       if (!reachedClosing) {
         return "CALL_HANG";
