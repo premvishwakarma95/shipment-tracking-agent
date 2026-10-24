@@ -6,6 +6,8 @@ import {
   DISPATCHER_STATUS_QUESTIONS,
   inTransitQuestions,
   contactUpdateQuestions,
+  carrierRepScript,
+  carrierRepShipmentGuide,
   DEFAULT_STATUS_QUESTIONS,
   DRIVER_ASSIGNED_BLOCK,
   driverOnRecordBlock,
@@ -34,6 +36,19 @@ export function buildCallVariables(doc: CallRequestDoc): Record<string, string> 
     calling_from: doc.calling_from?.trim() || "our company",
     // Spoken at the very end of the call, drivers only.
     closing_wish: contact.isDriver ? " Drive safe." : " Have a good day.",
+    // The whole spoken closing (END_CALL_MESSAGE = "{{closing_line}} [short pause]").
+    closing_line: contact.isCarrierRep
+      ? "Thanks so much for your help! We really appreciate you taking the time to get these shipments updated. Have a great day!"
+      : `Alright, thanks for the update.${contact.isDriver ? " Drive safe." : " Have a good day."} Goodbye.`,
+    // CARRIER_REPRESENTATIVE only: MDR's revised script (empty for everyone else).
+    carrier_rep_script: contact.isCarrierRep
+      ? carrierRepScript({
+          count: shipments.length,
+          callingFrom: doc.calling_from?.trim() || "our company",
+          greetingName: greetingName(doc.contact?.name),
+          email: typeof doc.contact?.email === "string" && doc.contact.email.trim() ? doc.contact.email.trim() : null,
+        })
+      : "",
     // Name from the payload's contact.name, for greeting the person by first name.
     contact_name: contactName(doc.contact?.name),
     greeting_name: greetingName(doc.contact?.name),
@@ -41,7 +56,7 @@ export function buildCallVariables(doc: CallRequestDoc): Record<string, string> 
     contact_context: contact.promptContext,
     contact_summary_note: contact.summaryNote,
     shipment_ids_text: shipments.map((s, i) => shipmentId(s, i)).join(", "),
-    shipments_block: shipments.map((s, i) => renderShipmentBlock(s, i, contact.isDispatcher, shipments.length > 1, now, contact.isDriver)).join("\n\n"),
+    shipments_block: shipments.map((s, i) => renderShipmentBlock(s, i, contact.isDispatcher || contact.isCarrierRep, shipments.length > 1, now, contact.isDriver, contact.isCarrierRep)).join("\n\n"),
     shipment_wording_rule: shipmentWordingRule(shipments.length),
     // Single shipment: the exact "about shipment …, route, scheduled …" text for
     // the introduction. Several shipments: none (the intro stays generic and each
@@ -104,6 +119,31 @@ function withDriverOnRecord(
   return questions.replace(DRIVER_ASSIGNED_BLOCK, driverOnRecordBlock(driver, speakingToDriver));
 }
 
+const CARRIER_STATUS_PHRASE: Record<string, string> = {
+  OUT_FOR_DELIVERY: "out for delivery",
+  PICKUP_TODAY: "scheduled for pickup today",
+  DISPATCHED: "dispatched",
+  IN_TRANSIT: "in transit",
+  CONTACT_UPDATE_REQUEST: "needing a contact update",
+};
+
+// The script's per-shipment opening for a carrier representative: ID, route
+// and the status we currently show.
+function carrierRepOpening(shipment: ShipmentLike, id: string, statusKey: string | null, first: boolean): string {
+  const from = formatLocation(shipment.pickup_location);
+  const to = formatLocation(shipment.delivery_location);
+  const route = from && to ? `${first ? "going " : ""}from ${from} to ${to}` : "";
+  const phrase = (statusKey && CARRIER_STATUS_PHRASE[statusKey]) || "";
+  const showing = phrase ? (first ? `It's currently showing as ${phrase}.` : `We're showing this one as ${phrase}.`) : "";
+  const lead = first ? "Perfect! Let's start with shipment" : "Alright, the next one is shipment";
+  const text = `${lead} ${spokenIdForCarrier(id)}${route ? `, ${route}` : ""}. ${showing}`.trim();
+  return `When you start this shipment, say this (every digit of the ID, including the last — the ID has ${idDigitCount(id)} digits): "${text}" This overrides any "Now, for a different shipment…" wording elsewhere. Then ask the open question below.`;
+}
+
+function spokenIdForCarrier(id: string): string {
+  return id.replace(/\D/g, "").split("").join(" ") || id;
+}
+
 function renderShipmentBlock(
   shipment: ShipmentLike,
   index: number,
@@ -111,6 +151,7 @@ function renderShipmentBlock(
   multi: boolean,
   now: Date,
   speakingToDriver: boolean,
+  carrierRep = false,
 ): string {
   const id = shipmentId(shipment, index);
   const status = typeof shipment.status === "string" ? shipment.status.trim() : "";
@@ -138,7 +179,9 @@ function renderShipmentBlock(
     driverOnRecord(shipment) !== null && (keyForQuestions === "PICKUP_TODAY" || keyForQuestions === "DISPATCHED");
   const mdrQuestions = renderMdrQuestions(shipment.questions, driverKnown, STANDARD_QUESTION_PATTERNS[keyForQuestions ?? ""]);
   const details = renderShipmentDetails(shipment, status, now);
-  const opening = multi
+  const opening = carrierRep
+    ? `\n${carrierRepOpening(shipment, id, resolveStatusKey(status), index === 0)}\n`
+    : multi
     ? `\nWhen you start this shipment, name it like this and say ALL of it — the ID (say every digit, including the last), the route and the schedule (say it naturally, once): "${shipmentOpening(shipment, id, resolveStatusKey(status), now)}".\n`
     : "";
   const statusKey = resolveStatusKey(status);
@@ -149,7 +192,13 @@ function renderShipmentBlock(
       ? contactUpdateQuestions(isDispatcher, onRecord)
       : statusKey === "IN_TRANSIT" && !spokenSchedule(shipment, statusKey, now)
         ? inTransitQuestions(isDispatcher, false)
-        : questionsForStatusKey(statusKey, isDispatcher);
+        : carrierRep
+          ? carrierRepShipmentGuide({
+              first: index === 0,
+              isPickup: statusKey === "PICKUP_TODAY" || statusKey === "DISPATCHED",
+              defaults: questionsForStatusKey(statusKey, true),
+            })
+          : questionsForStatusKey(statusKey, isDispatcher);
 
   return `
 ## Shipment ${index + 1}: ${id}${status ? ` — status: ${status}` : ""}
@@ -318,6 +367,7 @@ function greetingName(name: unknown): string {
 function describeContact(contact: CallRequestDoc["contact"] | undefined): {
   isDispatcher: boolean;
   isDriver: boolean;
+  isCarrierRep: boolean;
   promptContext: string;
   summaryNote: string;
 } {
@@ -336,13 +386,17 @@ function describeContact(contact: CallRequestDoc["contact"] | undefined): {
     } as Record<string, string>
   )[type] ?? "contact";
 
-  const promptContext = isDispatcher
+  const isCarrierRep = type === "CARRIER_REPRESENTATIVE";
+
+  const promptContext = isCarrierRep
+    ? `You are speaking with ${name}, a carrier representative — NOT the driver or the dispatcher. Whenever you ask about a driver (location, ETA, delay, delivery), refer to "the driver" in the third person; "you" always means the carrier representative.`
+    : isDispatcher
     ? `You are speaking with ${name}, the ${role} — NOT the driver. Whenever you ask about the driver (location, ETA, delay, delivery), refer to "the driver" in the third person; "you" always means the ${role}.`
     : `You are speaking with ${name}, the ${role}. "You" in the questions below refers to them.`;
 
-  const summaryNote = isDispatcher
+  const summaryNote = isDispatcher || isCarrierRep
     ? `The person on this call is the ${role} — NOT the driver. In every call_summary, attribute what they said to "the ${role}" (e.g. "The ${role} said the driver is ..."), and never call them "the driver".`
     : `The person on this call is the ${role}. In every call_summary, attribute what they said to "the ${role}", not to a different role.`;
 
-  return { isDispatcher, isDriver: type === "DRIVER", promptContext, summaryNote };
+  return { isDispatcher, isDriver: type === "DRIVER", isCarrierRep, promptContext, summaryNote };
 }

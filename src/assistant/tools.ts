@@ -54,7 +54,7 @@ export function buildTools() {
       function: {
         name: "reportEmailRequested",
         description:
-          "Call this when the person asks for the shipment information by email, with the email address if they gave one.",
+          "Call this when the person asks for the shipment information or the update email to be sent or resent by email, with the email address if they gave one. Do NOT call it when someone only says they will reply or update by email.",
         parameters: {
           type: "object",
           properties: {

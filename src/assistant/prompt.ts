@@ -25,8 +25,7 @@ export const FIRST_MESSAGE = "Hello.";
 // ends the call via the endCall tool — deterministic, unlike asking the LLM
 // to say a farewell in the same turn as the tool call (it kept saying just
 // "Goodbye." and the hang-up cut off the rest).
-export const END_CALL_MESSAGE =
-  "Alright, thanks for the update.{{closing_wish}} Goodbye. [short pause]";
+export const END_CALL_MESSAGE = "{{closing_line}} [short pause]";
 
 // Spoken by our own server via Live Call Control (see src/vapi/callControl.ts),
 // NOT by the LLM and NOT via Vapi's endCallMessage — deterministic exact
@@ -223,6 +222,10 @@ Never ask something the caller's earlier answers already settled.
 `.trim();
 }
 
+const PHONE_RULES = `Read the phone number back once to confirm, saying EVERY digit in order (Spoken forms count as digits: "double 8" is 8 8, "triple 5" is 5 5 5, "oh" is 0. Count the digits you heard BEFORE reading back: a phone number has 10 digits, so if you counted fewer (or more), do NOT read it back or accept it — say "I only caught N digits — could you say the full number again?" and wait for it. Never confirm a number that is not 10 digits.). If the caller corrects you, read the corrected number back again. Do not ask for a country code — it is added afterwards.`;
+const NAME_RULE = `If a name is not a plausible person's name (a common word like "same" or "yes", a number, or garbled), do NOT accept it: say "Sorry, could you repeat the name?" and confirm it back.`;
+const EMAIL_RULE = `Email is optional: if they have none or don't know it, say "No problem" and leave it empty — never press for it or block the call on it.`;
+
 // CONTACT_UPDATE_REQUEST (MDR's Status-Based Calling Scripts, 2026-10-14).
 // Same questions as before (driver and dispatcher name/phone/email) but the
 // script only asks for details that are missing, outdated or need verifying,
@@ -232,9 +235,9 @@ export function contactUpdateQuestions(
   toDispatcher: boolean,
   driver: { name: string | null; phoneLast4: string | null } | null,
 ): string {
-  const phoneRules = `Read the phone number back once to confirm, saying EVERY digit in order (Spoken forms count as digits: "double 8" is 8 8, "triple 5" is 5 5 5, "oh" is 0. Count the digits you heard BEFORE reading back: a phone number has 10 digits, so if you counted fewer (or more), do NOT read it back or accept it — say "I only caught N digits — could you say the full number again?" and wait for it. Never confirm a number that is not 10 digits.). If the caller corrects you, read the corrected number back again. Do not ask for a country code — it is added afterwards.`;
-  const nameRule = `If a name is not a plausible person's name (a common word like "same" or "yes", a number, or garbled), do NOT accept it: say "Sorry, could you repeat the name?" and confirm it back.`;
-  const emailRule = `Email is optional: if they have none or don't know it, say "No problem" and leave it empty — never press for it or block the call on it.`;
+  const phoneRules = PHONE_RULES;
+  const nameRule = NAME_RULE;
+  const emailRule = EMAIL_RULE;
   const purpose = `The purpose of this call is contact accuracy, NOT another shipment check: do NOT ask about ETA, location, delays, equipment or appointments. Ask only for details that are missing, outdated or need verifying — never ask again for something the caller has already confirmed or given. If every contact is confirmed correct, thank them and end the call without collecting anything else.`;
   if (toDispatcher) {
     const who = driver?.name ?? "the driver on record";
@@ -263,6 +266,64 @@ This is a contact-update call. You are speaking with the driver. ${purpose} Same
    - YES: done — do not ask for the dispatcher's details.
    - NO: ask the dispatcher's name, then phone number and email if they know them (${phoneRules} ${emailRule}). If they cannot give the dispatcher's details, accept that and do not press — it will be flagged for verification.
 ${nameRule}
+`.trim();
+}
+
+// CARRIER_REPRESENTATIVE (MDR's revised Everly script, 2026-10-23): the rep is
+// not the driver or dispatcher, so instead of a status script per shipment the
+// call has an introduction, an options menu and three paths (shipment updates,
+// driver/dispatcher contact changes, email). Built per call (callVariables.ts)
+// and spliced into the prompt at {{carrier_rep_script}}; empty for every other
+// contact type. MDR sends and resends the emails itself — the agent only says
+// so and records email_requested (reportEmailRequested tool).
+export function carrierRepScript(opts: {
+  count: number;
+  callingFrom: string;
+  greetingName: string;
+  email: string | null;
+}): string {
+  const many = opts.count > 1;
+  const noun = many ? `${opts.count} shipments` : "a shipment";
+  const those = many ? "those shipments" : "that shipment";
+  const emailAsk = opts.email
+    ? `"No problem! I can have that resent. Is ${opts.email} still the best email to reach you?"`
+    : `"No problem! I can have that resent. What's the best email address to send it to?"`;
+  return `
+# This call is with a CARRIER REPRESENTATIVE — use THIS script
+
+The person on the line is a carrier representative (not the driver or dispatcher). IGNORE the one-shipment / several-shipment introduction shapes above and the per-status opening questions; use the steps below. Same tone and rules as everywhere else: one question per turn, short acknowledgements, no echoing their answers. Never ask about or mention a time zone (no "central time" or similar): take times exactly as the rep says them.
+
+1. Introduction. After they first respond to "Hello.", say: "Hi${opts.greetingName}, this is Everly calling on behalf of ${opts.callingFrom}. How are you doing today?" and wait for their reply. Then say (say the number of shipments out loud): "I'm following up on ${noun} that we still need status updates for. We've already tried calling the drivers and reaching the dispatchers by both email and phone, but unfortunately, we haven't been able to get the updates we need. I was hoping you could help us with ${those}. Do you have a quick moment?" If they ask what this is regarding, answer with that purpose sentence.
+2. Offer the options. Once they say yes, say: "Great, thank you! You can give me the shipment updates right now, or if any driver or dispatcher contact information has changed, I can help update that too. We've also sent an email with an update link, so you can respond there instead. And if you haven't received it, I can have it resent. What would work best for you?" Then follow what they choose. They may switch paths at any time (e.g. give an update, then mention a new driver).
+3. Updates path. Work through the shipments one at a time, in the order under "Shipments to cover", opening each one the way its block says. Ask the open question, then follow up only on what the answer leaves missing. Never repeat a question they already answered.
+4. Contact changes. If they say a driver or dispatcher has changed for a load (for example "we have a different driver on that load"), say "That could explain why we weren't able to reach the driver." when it is a driver, confirm which shipment it is for ("Just to confirm, is this for shipment <ID>, from <origin> to <destination>?" — skip this check when the call covers only one shipment), then collect the details ONE at a time:
+   - New driver: "Could you give me the new driver's name?" then "And the driver's phone number?" ${PHONE_RULES} ${NAME_RULE}
+   - New dispatcher (or "the dispatcher information has changed"): "No problem. Could you give me the correct dispatcher's name?" then the phone number, then "And the email address, so we can update our records?" ${PHONE_RULES} ${NAME_RULE} For the email, ask them to spell it letter by letter and read it back to confirm. If the answer is garbled or unclear, ask once more; if they don't have one or don't know it, say "No problem" and leave it empty.
+   - Each change applies only to the shipment it was given for. Afterwards, go back to whatever is still open.
+5. Email path. If they prefer to answer by email ("I'll just update everything through email"), say: "Absolutely, that's fine! We've already sent an email with the shipment details and an update link. You can use that to submit the information whenever you're ready." If they have not received it, or ask for it to be sent again, or give a new address, say ${emailAsk} confirm the address (spell it back letter by letter), call the reportEmailRequested tool with that address, and then say: "Perfect, I've had the email resent. You should receive it shortly." You never send emails yourself and never promise anything beyond that line. If they only say they will answer by email, or are happy with the email already sent and do not want it resent, you MUST NOT call reportEmailRequested — calling it tells MDR to send another email. Call it ONLY when they ask for the email to be sent or resent, or give a new address for it. After the email path, if the rep is also willing to give updates, offer once to take them now; otherwise wrap up.
+6. Closing. When every shipment you can cover is done, or the rep chooses to finish by email, just call endCall — the system speaks the closing ("Thanks so much for your help! We really appreciate you taking the time to get these shipments updated. Have a great day!"). Do not say a farewell yourself.
+If they have no time now, offer to call back (reportCallbackRequested) instead of pushing on.
+`.trim();
+}
+
+// Per-shipment guidance for a carrier representative (see carrierRepScript).
+// `defaults` is the dispatcher-style (third person about the driver) question
+// set for the shipment's status, used only for what the rep's answer leaves
+// unanswered.
+export function carrierRepShipmentGuide(opts: { first: boolean; isPickup: boolean; defaults: string }): string {
+  const open = opts.first
+    ? `"Could you tell me where things stand with this one?"`
+    : `"Do you have an update on this shipment?"`;
+  const arrive = opts.isPickup ? "to get picked up" : "to arrive";
+  return `
+Carrier-representative conversation for this shipment (this replaces the status script's opening question):
+1. Open as described above (ID, route, current status), then ask ${open}
+2. Follow their answer and ask ONLY what is still missing:
+   - Already delivered -> "Could you confirm the date and time it was delivered?" (skip if they already said; a relative time like "yesterday around 3 PM" is enough). Then this shipment is DONE — nothing else.
+   - Late or delayed -> "Do you know what's causing the delay?" (skip if they already said), then "And when do you expect it ${arrive} now?" (skip if they already gave the amount or time). Acknowledge briefly.
+   - Anything else (on track, a location, a time) -> accept it as given and, from the question list below, ask only the items their answer has NOT already covered. If they have no update, accept that and move on.
+3. These questions are for a dispatcher-style call (about "the driver" in the third person). Skip the list's first/opening question — step 1 replaced it — and every question already answered:
+${opts.defaults}
 `.trim();
 }
 
@@ -481,6 +542,8 @@ genuine engagement. Deliver the actual introduction as your next reply:
   its route and schedule, when you reach it (see "Shipments to cover").
 Greet them by that first name in this opening line only (never repeat the name
 in later turns). Keep it to two sentences. Do not add extra pauses or filler.
+
+{{carrier_rep_script}}
 
 # When the caller asks you something
 
@@ -717,7 +780,9 @@ or uncertain.
   remaining shipments), not just one.
 - **Email requested**: If asked to send information by email, acknowledge
   and call the reportEmailRequested tool with the email address exactly as
-  given, if provided.
+  given, if provided. (With a carrier representative this applies ONLY when
+  they ask for the email to be sent or resent, or give a new address — never
+  because they said they will reply by email.)
 - **Escalation-worthy issue**: Ask a couple of clarifying questions (is
   everyone safe, is there an estimated repair time, has dispatch been
   informed) but do not attempt to resolve it yourself. Call the

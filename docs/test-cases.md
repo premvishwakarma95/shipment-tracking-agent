@@ -353,6 +353,25 @@ of the current UTC time.
   the silence.
 - [ ] **TC-ST-11 staging run** of all five statuses after deploy.
 
+### Carrier representative script (2026-10-23, local calls only)
+
+Payload: `contact.type: "CARRIER_REPRESENTATIVE"` with `contact.email`, two
+shipments (IN_TRANSIT + DISPATCHED), `calling_from: "MyDrayRate"`.
+
+- [x] **TC-CR-01 updates** — introduction + options, shipment openings (ID,
+  route, status), delivered (date/time), late (cause + new time), closing
+  "Have a great day!", `CALL_COMPLETED`.
+- [x] **TC-CR-02 new driver** — shipment confirmed, name, phone (digit check,
+  read back), `driver` filled for that shipment only, `driver_confirmed` false.
+- [x] **TC-CR-03 new dispatcher** — name (corrected), phone, email optional;
+  `open_issue` when the email is not given.
+- [x] **TC-CR-04 email only** ("I'll update through email") — "already sent";
+  NO `email_requested`; both shipments summarised as responding by email.
+- [x] **TC-CR-05 resend** — address confirmed, resend line, `email_requested:
+  true` + `requested_email` on every shipment; unreached shipments say the
+  contact asked for a resend (not "Not discussed") — code fallback retest pending.
+- [ ] **TC-CR-06 staging run** after deploy.
+
 ## Known gaps (don't re-file)
 
 - No automated test suite yet — all of the above are manual/curl-driven.

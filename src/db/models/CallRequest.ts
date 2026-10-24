@@ -57,6 +57,9 @@ const ContactSchema = new Schema(
     type: { type: String, enum: CONTACT_TYPES, required: true },
     name: { type: String, required: true },
     phone: { type: String, required: true },
+    // Optional; used to confirm the address when a carrier representative asks
+    // for the update email to be resent.
+    email: { type: String, default: null },
   },
   { _id: false },
 );

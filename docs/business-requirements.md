@@ -160,3 +160,19 @@ happens next in every case.
 If the caller goes silent and the agent gives up with the normal closing line,
 the event stays `CALL_COMPLETED`; `call_summary` states that the caller stopped
 responding and which questions went unanswered.
+
+## Carrier representative script (2026-10-23)
+
+Only for `contact.type: CARRIER_REPRESENTATIVE`: introduction on behalf of
+`calling_from` with the number of shipments and the earlier contact attempts,
+then an options menu (give updates now / change driver or dispatcher contacts /
+reply through the emailed update link, which can be resent). Updates are taken
+shipment by shipment (ID, route, current status, open question; delivered ->
+date and time, late -> cause and new arrival, plus MDR's status-wise
+questions for what is still missing). A changed driver or dispatcher is saved
+per shipment in `driver` / `dispatcher` (name, phone, email). If the rep asks for
+the email to be sent or resent (or gives a new address) the agent says it was
+resent and the result carries `email_requested: true` (+ `requested_email`);
+MDR sends the emails and the event type stays `CALL_COMPLETED`. Closing: "Thanks
+so much for your help! We really appreciate you taking the time to get these
+shipments updated. Have a great day!" The calling window is MDR's, not ours.

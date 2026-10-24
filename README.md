@@ -71,7 +71,11 @@ the scheduled date. Shipments may also carry `pickup_location`, `delivery_locati
 `driver {name, phone}`: the agent names the shipment, route and scheduled time
 first and confirms the driver on record instead of asking cold. Question order
 and skips follow MDR's status-based scripts per status and contact type
-(driver vs dispatcher) — see CLAUDE.md's "Status-based calling scripts". See
+(driver vs dispatcher) — see CLAUDE.md's "Status-based calling scripts". `CARRIER_REPRESENTATIVE` contacts get their own script (introduction, options
+menu, updates / contact changes / email); the contact is asked for the update
+email to be resent -> each shipment result carries `email_requested: true`
+(+ `requested_email`), omitted otherwise. See CLAUDE.md's "Carrier representative
+script". See
 CLAUDE.md's "Multi-shipment calls" and "MDR multi-shipment
 feedback changes" sections.
 

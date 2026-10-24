@@ -69,6 +69,17 @@ project's docs did.
 - Confirmed by MDR 2026-10-14: a caller who goes silent mid-call is still
   `CALL_COMPLETED`, with the silence described in `call_summary`.
 
+## CONFIRMED 2026-10-23 (carrier representative script)
+
+- MDR handles the calling window itself — nothing to build here.
+- MDR sends and resends the update emails itself; no API/feature on our side.
+  The agent only tells the rep and sets `email_requested` (+ `requested_email`)
+  in the shipment results. Event type unchanged (`CALL_COMPLETED`).
+- The new script applies to `CARRIER_REPRESENTATIVE` only (not `CARRIER_MAIN`).
+- Driver/dispatcher changes are per shipment; the `dispatcher` result object is
+  filled like `driver`. `calling_from` is used as the company name; MDR sends
+  status-wise questions per shipment.
+
 ## CONFIRMED 2026-10-06 (MDR feedback on multi-shipment calls)
 
 - Timestamps `eta`/`pickup_completed_at`/`delivery_completed_at` use

@@ -717,6 +717,65 @@ assistant and need `npm run assistant:create`.
   reach driver" escalation; time zone of spoken/scheduled times (all UTC today);
   a date-only schedule with "on schedule" gives `eta` at `00:00:00`.
 
+## Carrier representative script (2026-10-23, local until deployed)
+
+MDR's revised Everly script for `contact.type: "CARRIER_REPRESENTATIVE"` ONLY
+(`CARRIER_MAIN` and every other type are unchanged — MDR confirmed). The rep is
+neither driver nor dispatcher, so the call is an introduction + options menu +
+three paths instead of a status script per shipment. Calling window is NOT
+ours: MDR handles it on their side (Agent 1 uses Mon-Fri 8-17 in the carrier's
+local time; we do not implement or need that).
+
+- **Where:** `prompt.ts` `carrierRepScript()` (spliced in at
+  `{{carrier_rep_script}}`, empty for other contacts) and
+  `carrierRepShipmentGuide()` (per shipment); `callVariables.ts` builds both,
+  plus `closing_line` and `carrierRepOpening()`; `describeContact` returns
+  `isCarrierRep` (third-person driver wording, summary says "the carrier
+  representative said…").
+- **Flow:** (1) "Hi <name>, this is Everly calling on behalf of <calling_from>.
+  How are you doing today?" then the purpose line with the shipment COUNT
+  ("already tried the drivers and dispatchers by email and phone…", "quick
+  moment?"). (2) Options: updates now / contact changes / the emailed update
+  link (can be resent). (3) Updates: per shipment "Perfect! Let's start with
+  shipment <ID>, going from <A> to <B>. It's currently showing as <status>.
+  Could you tell me where things stand?" (later ones: "the next one is… Do you
+  have an update?"). Delivered -> date/time only; late -> cause, then new
+  arrival; anything else -> only the items of MDR's status-wise `questions[]`
+  (our dispatcher-style defaults as fallback) the answer didn't cover. (4)
+  Contact changes: confirm the shipment, then new driver (name, phone) or
+  dispatcher (name, phone, email, spelled back); applies only to that shipment;
+  same phone/name read-back rules. (5) Email: "already sent"; resend ->
+  confirm the address on record or a new one -> `reportEmailRequested` -> "I've
+  had the email resent. You should receive it shortly." (6) Closing. The agent
+  never claims more than that — MDR sends the emails.
+- **Never ask about time zones** ("central time") — a real call invented that.
+- **`email_requested`** (agreed with MDR 2026-10-23; no new event type, the
+  event stays `CALL_COMPLETED`): each shipment's result gets `email_requested:
+  true` + `requested_email` ONLY when `tool_flags.email_requested` is set;
+  omitted otherwise (`buildCommonResult`, `CommonCallResult` optional fields).
+  The tool must be called ONLY when the rep asks for the email to be sent/resent
+  or gives a new address — NOT when they merely say they will reply by email (a
+  real call set the flag wrongly; prompt, special-case rule and the tool
+  description in `tools.ts` were tightened). A shipment the extraction returned
+  nothing for, on a call with `email_requested`, reads "The contact asked for
+  the update email to be resent; no shipment update was given…" instead of "Not
+  discussed" (code fallback); the extraction prompt also asks for an entry per
+  shipment on email-only calls.
+- **`dispatcher`** result object already existed (same shape as `driver`); the
+  carrier-rep extraction mapping fills it per shipment (and `driver_confirmed:
+  false` with the new driver), never copying the rep's own name/phone/email.
+  `contact.email` is now stored on `CallRequest.contact` so the agent can
+  confirm it.
+- **Closing:** `END_CALL_MESSAGE` is now `"{{closing_line}} [short pause]"`;
+  carrier reps get "Thanks so much for your help! We really appreciate you
+  taking the time to get these shipments updated. Have a great day!", everyone
+  else the previous line. `callOutcome.ts` `COMPLETION_SIGNAL` also matches
+  "have a great day" (without it these calls would read `CALL_HANG`).
+- **Voice quirks seen, not ours:** the brand name is sometimes pronounced "My
+  Dre Rate" (MDR can send `calling_from` as "My Dray Rate"), a shipment ID digit
+  is occasionally dropped when read, idle "Hello? Are you there?" lines fire
+  during slow turns.
+
 ## Wrong number vs. wrong contact (both via reportWrongContact)
 
 One tool, two outcomes, distinguished by whether a referral was given —
@@ -750,7 +809,7 @@ handles both the message and the hangup.
 
 ## Known gaps / don't repeat these
 
-- **`EMAIL_REQUESTED` has no confirmed MDR event_type.** The confirmed
+- **`EMAIL_REQUESTED` has no event_type, by agreement (2026-10-23): MDR gets the `email_requested` flag in the shipment results instead (see "Carrier representative script").** Older note: The confirmed
   integration guide's webhook event list doesn't include it (only
   NO_ANSWER/VOICEMAIL/BUSY/CALL_FAILED/CALL_DROPPED/CALLBACK_REQUESTED/
   WRONG_CONTACT/CALL_COMPLETED). We still capture it via

@@ -86,8 +86,8 @@ async function applyToolCall(doc: CallRequestDoc, call: VapiToolCall) {
       doc.tool_flags.callback_after_minutes = (args.callback_after_minutes as number) ?? null;
       return;
     case "reportEmailRequested":
-      // No confirmed MDR event_type for this yet — kept for internal
-      // visibility only, see docs/requirements-tracker.md.
+      // No separate event_type (MDR confirmed 2026-10-23): the flag is sent as
+      // email_requested in each shipment's result, see buildCommonResult.
       doc.tool_flags.email_requested = true;
       doc.tool_flags.requested_email = (args.requested_email as string) ?? null;
       return;
@@ -321,6 +321,10 @@ function buildCommonResult(
   inboundShipment: ShipmentRecord,
   callTime: Date,
 ): CommonCallResult {
+  // A shipment the extraction returned nothing for, on a call where the contact
+  // asked for the update email to be (re)sent and gave no update: say so
+  // instead of "Not discussed on this call." (checked 2026-10-24, LOCAL-CR-008).
+  const emailOnlyShipment = notReached && Boolean(toolFlags?.email_requested);
   return {
     driver_confirmed: (structured.driver_confirmed as boolean) ?? null,
     driver_assigned: (structured.driver_assigned as boolean) ?? null,
@@ -365,10 +369,14 @@ function buildCommonResult(
     // shipment was reached), that's the extraction pass misbehaving, not a
     // real "unconfirmed" case, so warn loudly rather than silently sending
     // MDR a fabricated-looking default.
-    confidence_score: notReached
+    confidence_score: emailOnlyShipment
+      ? 1
+      : notReached
       ? 0
       : valueOrWarnDefault(structured.confidence_score as number | undefined, 0, "confidence_score"),
-    call_summary: notReached
+    call_summary: emailOnlyShipment
+      ? EMAIL_ONLY_SUMMARY
+      : notReached
       ? NOT_REACHED_SUMMARY
       : valueOrWarnDefault(structured.call_summary as string | undefined, "No summary available.", "call_summary"),
     next_action: (structured.next_action as string) ?? null,
@@ -386,6 +394,17 @@ function buildCommonResult(
       structured.dispatcher_email,
     ),
     contacts_confirmed: (structured.contacts_confirmed as boolean) ?? null,
+    // Call-level flag from the reportEmailRequested tool, repeated on each
+    // shipment's result; omitted when nobody asked for the email.
+    ...(toolFlags?.email_requested
+      ? {
+          email_requested: true,
+          requested_email:
+            typeof toolFlags.requested_email === "string" && EMAIL_PATTERN.test(toolFlags.requested_email.trim())
+              ? toolFlags.requested_email.trim()
+              : null,
+        }
+      : {}),
   };
 }
 
@@ -396,6 +415,9 @@ function buildCommonResult(
 // UPDATE-003 — that specific case was already correctly left null by the
 // extraction, but this exists so a similarly garbled value NEVER reaches
 // MDR even if the extraction's judgment is wrong some other time).
+const EMAIL_ONLY_SUMMARY =
+  "The contact asked for the update email to be resent; no shipment update was given for this shipment on this call.";
+
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Reconstructs a nested ContactInfo from resultSchema.ts's flat

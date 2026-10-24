@@ -9,7 +9,7 @@ type ToolFlags = CallRequestDoc["tool_flags"];
 // count too. Mid-call acknowledgements like "Thanks for the update" can't be
 // the signal because the agent says them throughout the call. Matches an AI
 // line, tolerant of ASR noise elsewhere.
-const COMPLETION_SIGNAL = /AI:[^\n]*(\bgoodbye\b|drive safe|have a good day)/i;
+const COMPLETION_SIGNAL = /AI:[^\n]*(\bgoodbye\b|drive safe|have a good day|have a great day)/i;
 
 // Allowlist, not denylist (same convention as the reference project):
 // anything we don't explicitly recognize maps to the conservative
