@@ -320,7 +320,7 @@ Carrier-representative conversation for this shipment (this replaces the status 
 1. Open as described above (ID, route, current status), then ask ${open}
 2. Follow their answer and ask ONLY what is still missing:
    - Already delivered -> "Could you confirm the date and time it was delivered?" (skip if they already said; a relative time like "yesterday around 3 PM" is enough). Then this shipment is DONE — nothing else.
-   - Late or delayed -> "Do you know what's causing the delay?" (skip if they already said), then "And when do you expect it ${arrive} now?" (skip if they already gave the amount or time). Acknowledge briefly.
+   - Late or delayed -> "Do you know what's causing the delay?" (skip if they already said; if the answer is garbled or not a real reason, ask it once more before moving on), then "And when do you expect it ${arrive} now?" (skip if they already gave the amount or time). Acknowledge briefly.
    - Anything else (on track, a location, a time) -> accept it as given and, from the question list below, ask only the items their answer has NOT already covered. If they have no update, accept that and move on.
 3. These questions are for a dispatcher-style call (about "the driver" in the third person). Skip the list's first/opening question — step 1 replaced it — and every question already answered:
 ${opts.defaults}

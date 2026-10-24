@@ -119,6 +119,8 @@ function withDriverOnRecord(
   return questions.replace(DRIVER_ASSIGNED_BLOCK, driverOnRecordBlock(driver, speakingToDriver));
 }
 
+const DIGIT_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
+
 const CARRIER_STATUS_PHRASE: Record<string, string> = {
   OUT_FOR_DELIVERY: "out for delivery",
   PICKUP_TODAY: "scheduled for pickup today",
@@ -137,7 +139,12 @@ function carrierRepOpening(shipment: ShipmentLike, id: string, statusKey: string
   const showing = phrase ? (first ? `It's currently showing as ${phrase}.` : `We're showing this one as ${phrase}.`) : "";
   const lead = first ? "Perfect! Let's start with shipment" : "Alright, the next one is shipment";
   const text = `${lead} ${spokenIdForCarrier(id)}${route ? `, ${route}` : ""}. ${showing}`.trim();
-  return `When you start this shipment, say this (every digit of the ID, including the last — the ID has ${idDigitCount(id)} digits): "${text}" This overrides any "Now, for a different shipment…" wording elsewhere. Then ask the open question below.`;
+  const words = id
+    .replace(/\D/g, "")
+    .split("")
+    .map((d) => DIGIT_WORDS[Number(d)])
+    .join(" ");
+  return `When you start this shipment, say this, starting with "${lead}" (every digit of the ID, including the last — the ID has ${idDigitCount(id)} digits, in words: ${words}; never skip or merge a digit): "${text}" This overrides any "Now, for a different shipment…" wording elsewhere. Then ask the open question below.`;
 }
 
 function spokenIdForCarrier(id: string): string {
