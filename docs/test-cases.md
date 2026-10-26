@@ -382,7 +382,12 @@ shipments (IN_TRANSIT + DISPATCHED), `calling_from: "MyDrayRate"`.
   introduction, not the voicemail script; a real voicemail is still detected.
 - [ ] **TC-CR-10 interruption** — deferred: a single "Hello?" does not stop the
   agent (`stopSpeakingPlan.numWords`).
-- [ ] **TC-CR-11 staging run** after deploy.
+- [ ] **TC-CR-11 email in the menu** — with `contact.email` the menu names the
+  address naturally; without it the generic sentence.
+- [ ] **TC-CR-12 resend flag** — "please resend" -> `email_requested: true` +
+  `requested_email` (address on record or the new one), even if the agent forgot
+  the tool (transcript backstop).
+- [ ] **TC-CR-13 staging run** after deploy.
 
 ## Known gaps (don't re-file)
 

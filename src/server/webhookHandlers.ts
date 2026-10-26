@@ -147,6 +147,15 @@ export async function handleEndOfCallReport(message: {
     const recovered = await pollForStructuredData(message.call.id);
     if (recovered) structured = recovered;
   }
+  // Backstop: the agent sometimes says "I've had the email resent" without
+  // having called reportEmailRequested (STG-CU-CR-004), so MDR would never see
+  // the flag. If the transcript has the line and the tool flag is missing, set
+  // it (address on record unless the tool captured another).
+  if (!doc.tool_flags.email_requested && /AI:[^\n]*had the email resent/i.test(message.transcript ?? "")) {
+    doc.tool_flags.email_requested = true;
+    doc.tool_flags.requested_email = doc.contact?.email ?? null;
+    console.warn(`[webhookHandlers] ${message.call.id}: resend line spoken but reportEmailRequested not called — flag set from transcript`);
+  }
   const eventType = classifyEventType(
     message.endedReason,
     doc.tool_flags,

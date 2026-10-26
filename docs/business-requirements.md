@@ -183,3 +183,8 @@ each shipment result (`null` when no email was requested), like `driver` and
 shipment the carrier representative is asked only about the driver and dispatcher
 on that shipment (never their own details). The agent confirms the final spelling
 of a new email address before saying it has been resent.
+
+Update 2026-10-26 (later): when the request carries `contact.email`, the options
+menu says "We've also sent an email to <address> with an update link"; otherwise
+the generic wording. A resend request always sets `email_requested` (+ the address
+on record or the new one), including if the agent forgot to record it mid-call.

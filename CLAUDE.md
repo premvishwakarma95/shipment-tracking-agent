@@ -787,6 +787,15 @@ local time; we do not implement or need that).
 - **Email resend rules:** after a spelled or corrected address the agent reads
   the FINAL spelling back and waits for a yes before calling `reportEmailRequested`,
   says the resend line, and never calls `endCall` in the same turn.
+- **Email in the menu (2026-10-26):** when the payload has `contact.email` the
+  menu says "We've also sent an email to <address> with an update link" (said
+  naturally, not spelled out); without it the generic "We've also sent an email
+  with an update link". The resend flow must call `reportEmailRequested` BEFORE
+  saying "I've had the email resent"; an address on record needs only a yes. A
+  real staging call said the line without calling the tool, so MDR got no flag —
+  `handleEndOfCallReport` now has a backstop: if the transcript has "had the email
+  resent" and `tool_flags.email_requested` is unset, it sets it (address on
+  record) and logs a warning.
 - **Shipment ID is read in groups** in the carrier opening ("1 3 1, 9 5 4, 1 4
   7", `spokenIdForCarrier`): read as one run, the model "corrected" 131954147 to
   the familiar 1 3 1 9 4… pattern and dropped the 5 in 4 of 7 calls.
