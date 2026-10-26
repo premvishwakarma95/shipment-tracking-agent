@@ -148,10 +148,14 @@ const assistantConfig = {
   ],
   voicemailDetection: {
     provider: "vapi",
+    // Relaxed 2026-10-26: starting at 2 s with a check every 2.5 s misread a
+    // person who answered late ("Hello?" at ~9 s) as a voicemail and played the
+    // voicemail script to them (call 01a17719). Check later and less often; a
+    // real voicemail greeting is still caught well within these ~26 s.
     backoffPlan: {
       maxRetries: 5,
-      startAtSeconds: 2,
-      frequencySeconds: 2.5,
+      startAtSeconds: 6,
+      frequencySeconds: 5,
     },
     beepMaxAwaitSeconds: 20,
   },

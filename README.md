@@ -74,7 +74,7 @@ and skips follow MDR's status-based scripts per status and contact type
 (driver vs dispatcher) — see CLAUDE.md's "Status-based calling scripts". `CARRIER_REPRESENTATIVE` contacts get their own script (introduction, options
 menu, updates / contact changes / email); the contact is asked for the update
 email to be resent -> each shipment result carries `email_requested: true`
-(+ `requested_email`), omitted otherwise. See CLAUDE.md's "Carrier representative
+(+ `requested_email`); both are `null` when no email was requested. See CLAUDE.md's "Carrier representative
 script". See
 CLAUDE.md's "Multi-shipment calls" and "MDR multi-shipment
 feedback changes" sections.

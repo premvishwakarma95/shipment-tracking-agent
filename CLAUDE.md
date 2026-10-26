@@ -750,9 +750,11 @@ local time; we do not implement or need that).
   never claims more than that — MDR sends the emails.
 - **Never ask about time zones** ("central time") — a real call invented that.
 - **`email_requested`** (agreed with MDR 2026-10-23; no new event type, the
-  event stays `CALL_COMPLETED`): each shipment's result gets `email_requested:
-  true` + `requested_email` ONLY when `tool_flags.email_requested` is set;
-  omitted otherwise (`buildCommonResult`, `CommonCallResult` optional fields).
+  event stays `CALL_COMPLETED`): each shipment's result always carries
+  `email_requested` and `requested_email` — `true` + the address only when
+  `tool_flags.email_requested` is set, otherwise `null` (MDR asked for null
+  rather than omission, 2026-10-26; `driver`/`dispatcher` were already null
+  when nothing was collected). See `buildCommonResult`, `CommonCallResult`.
   The tool must be called ONLY when the rep asks for the email to be sent/resent
   or gives a new address — NOT when they merely say they will reply by email (a
   real call set the flag wrongly; prompt, special-case rule and the tool
@@ -771,6 +773,35 @@ local time; we do not implement or need that).
   taking the time to get these shipments updated. Have a great day!", everyone
   else the previous line. `callOutcome.ts` `COMPLETION_SIGNAL` also matches
   "have a great day" (without it these calls would read `CALL_HANG`).
+- **Contact check for a carrier rep (CONTACT_UPDATE_REQUEST shipments,
+  2026-10-26):** `carrierRepContactQuestions()` — confirm the driver on record
+  in the third person (name/phone/optional email only if wrong), then "Is the
+  dispatcher information we have for this shipment still correct?" (name, phone,
+  email if not). It NEVER asks the rep whether they are the best dispatcher or
+  for their own phone/email (the dispatcher set did, wrongly), and a number the
+  agent read out from the record is not a correction (a real call saved the
+  read-out number, minus its country code, as a "corrected" driver phone).
+  `callVariables.ts` picks it before the generic contact-update set; an IN_TRANSIT
+  shipment with no schedule now also uses the carrier guide (with the no-schedule
+  questions) instead of bypassing it.
+- **Email resend rules:** after a spelled or corrected address the agent reads
+  the FINAL spelling back and waits for a yes before calling `reportEmailRequested`,
+  says the resend line, and never calls `endCall` in the same turn.
+- **Shipment ID is read in groups** in the carrier opening ("1 3 1, 9 5 4, 1 4
+  7", `spokenIdForCarrier`): read as one run, the model "corrected" 131954147 to
+  the familiar 1 3 1 9 4… pattern and dropped the 5 in 4 of 7 calls.
+- **Voicemail detection relaxed (`create.ts`, 2026-10-26):** `backoffPlan`
+  startAtSeconds 6 / frequencySeconds 5 (was 2 / 2.5). A person who answered
+  late ("Hello?" at ~9 s) was misread as voicemail and got the voicemail script
+  ("Hello. This is Everly, the AI assistant calling on behalf of … regarding
+  shipment updates") instead of the introduction. The voicemail message cannot be
+  interrupted by speech. Heuristic, not a guarantee — a real voicemail must still
+  be detected (MDR relies on the `VOICEMAIL` event); retest both cases.
+- **Interruption (not changed yet, deferred by the user 2026-10-26):**
+  `stopSpeakingPlan.numWords` is 2, so a single "Hello?" does not stop the
+  agent; MDR's tester reported the AI keeps talking when interrupted. Likely
+  fix: numWords 0 (or 1) — trade-off is that noise and "yeah"/"uh-huh" will cut
+  the agent off.
 - **Voice quirks seen, not ours:** the brand name is sometimes pronounced "My
   Dre Rate" (MDR can send `calling_from` as "My Dray Rate"), a shipment ID digit
   is occasionally dropped when read, idle "Hello? Are you there?" lines fire

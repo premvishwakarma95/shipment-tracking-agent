@@ -80,6 +80,16 @@ project's docs did.
   filled like `driver`. `calling_from` is used as the company name; MDR sends
   status-wise questions per shipment.
 
+## 2026-10-26 (MDR feedback on carrier representative / contact calls)
+
+- Agreed: `email_requested`, `requested_email`, `driver`, `dispatcher` are `null`
+  when not applicable (present, not omitted). Menu wording stays "We've also sent
+  an email with an update link" (no address spoken).
+- Done on local, deployed after testing: carrier-rep contact questions, email
+  resend confirm/say-before-hangup, voicemail detection tuning, shipment-ID
+  grouping.
+- Deferred by us: the agent not stopping when interrupted (`numWords`).
+
 ## CONFIRMED 2026-10-06 (MDR feedback on multi-shipment calls)
 
 - Timestamps `eta`/`pickup_completed_at`/`delivery_completed_at` use

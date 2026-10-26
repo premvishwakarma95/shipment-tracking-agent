@@ -176,3 +176,10 @@ resent and the result carries `email_requested: true` (+ `requested_email`);
 MDR sends the emails and the event type stays `CALL_COMPLETED`. Closing: "Thanks
 so much for your help! We really appreciate you taking the time to get these
 shipments updated. Have a great day!" The calling window is MDR's, not ours.
+
+Update 2026-10-26: `email_requested` and `requested_email` are always present in
+each shipment result (`null` when no email was requested), like `driver` and
+`dispatcher` (null when nothing was collected). On a CONTACT_UPDATE_REQUEST
+shipment the carrier representative is asked only about the driver and dispatcher
+on that shipment (never their own details). The agent confirms the final spelling
+of a new email address before saying it has been resent.

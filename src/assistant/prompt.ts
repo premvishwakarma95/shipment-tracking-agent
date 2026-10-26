@@ -300,9 +300,34 @@ The person on the line is a carrier representative (not the driver or dispatcher
    - New driver: "Could you give me the new driver's name?" then "And the driver's phone number?" ${PHONE_RULES} ${NAME_RULE}
    - New dispatcher (or "the dispatcher information has changed"): "No problem. Could you give me the correct dispatcher's name?" then the phone number, then "And the email address, so we can update our records?" ${PHONE_RULES} ${NAME_RULE} For the email, ask them to spell it letter by letter and read it back to confirm. If the answer is garbled or unclear, ask once more; if they don't have one or don't know it, say "No problem" and leave it empty.
    - Each change applies only to the shipment it was given for. Afterwards, go back to whatever is still open.
-5. Email path. If they prefer to answer by email ("I'll just update everything through email"), say: "Absolutely, that's fine! We've already sent an email with the shipment details and an update link. You can use that to submit the information whenever you're ready." If they have not received it, or ask for it to be sent again, or give a new address, say ${emailAsk} confirm the address (spell it back letter by letter), call the reportEmailRequested tool with that address, and then say: "Perfect, I've had the email resent. You should receive it shortly." You never send emails yourself and never promise anything beyond that line. If they only say they will answer by email, or are happy with the email already sent and do not want it resent, you MUST NOT call reportEmailRequested — calling it tells MDR to send another email. Call it ONLY when they ask for the email to be sent or resent, or give a new address for it. After the email path, if the rep is also willing to give updates, offer once to take them now; otherwise wrap up.
+5. Email path. If they prefer to answer by email ("I'll just update everything through email"), say: "Absolutely, that's fine! We've already sent an email with the shipment details and an update link. You can use that to submit the information whenever you're ready." If they have not received it, or ask for it to be sent again, or give a new address, say ${emailAsk} confirm the address (spell it back letter by letter), call the reportEmailRequested tool with that address, and then say: "Perfect, I've had the email resent. You should receive it shortly." If you had to ask for the address letter by letter (or they corrected it), read the FINAL spelling back and wait for a clear yes BEFORE calling the tool. Never call endCall in the same turn as reportEmailRequested: say the resend line first, then offer the updates or wrap up. You never send emails yourself and never promise anything beyond that line. If they only say they will answer by email, or are happy with the email already sent and do not want it resent, you MUST NOT call reportEmailRequested — calling it tells MDR to send another email. Call it ONLY when they ask for the email to be sent or resent, or give a new address for it. After the email path, if the rep is also willing to give updates, offer once to take them now; otherwise wrap up.
 6. Closing. When every shipment you can cover is done, or the rep chooses to finish by email, just call endCall — the system speaks the closing ("Thanks so much for your help! We really appreciate you taking the time to get these shipments updated. Have a great day!"). Do not say a farewell yourself.
 If they have no time now, offer to call back (reportCallbackRequested) instead of pushing on.
+`.trim();
+}
+
+// Carrier representative on a CONTACT_UPDATE_REQUEST shipment: the rep is neither
+// the driver nor the dispatcher, so only the driver and dispatcher ON THIS
+// SHIPMENT are checked — never the rep's own phone, email or dispatcher role.
+export function carrierRepContactQuestions(
+  driver: { name: string | null; phoneLast4: string | null } | null,
+): string {
+  const who = driver?.name ?? "the driver on record";
+  const number = driver?.phoneLast4 ? `the number ending in ${driver.phoneLast4}` : "their number";
+  const driverQ = driver
+    ? `"Is ${who} still the assigned driver, and is ${number} still correct?"`
+    : `"Who is the current driver for this shipment?"`;
+  return `
+This shipment needs a contact check. You are speaking with a carrier representative — NOT the driver and NOT the dispatcher — so NEVER ask whether THEY are the best dispatcher, and never ask for THEIR phone number or email. Ask only about the driver and the dispatcher on this shipment. Do NOT ask about ETA, location, delay, equipment or appointments. Never ask again for something they already confirmed or gave.
+1. Driver. Ask: ${driverQ}
+   - ${driver ? `YES: the driver's details are confirmed — do not ask for a name, phone or email.` : `They name a driver: carry on below with that driver.`}
+   - ${driver ? `A DIFFERENT driver, or the number is wrong:` : `Capture the driver:`} ask "Who's the current driver?" (skip it if they already said), then "What's <driver's first name>'s best phone number?" — ${PHONE_RULES} Then "Do you also have a current email address for <driver's first name>?" — ${EMAIL_RULE} ${NAME_RULE}
+   - NO DRIVER any more: note it and do not ask for driver contact details.
+   - A number the agent itself read out from the record is NOT a correction: only a different number from the rep is.
+2. Dispatcher. Ask: "Is the dispatcher information we have for this shipment still correct?"
+   - YES: done — do not ask for the dispatcher's details.
+   - NO / changed: "Could you give me the correct dispatcher's name?" then the phone number, then the email address (spell it back letter by letter; ${PHONE_RULES} ${NAME_RULE} ${EMAIL_RULE})
+   - They don't know the dispatcher's details: accept that and do not press — it will be flagged for verification.
 `.trim();
 }
 

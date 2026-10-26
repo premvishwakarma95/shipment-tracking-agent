@@ -142,12 +142,13 @@ export interface CommonCallResult {
   driver: ContactInfo | null;
   dispatcher: ContactInfo | null;
   contacts_confirmed: boolean | null;
-  // Added 2026-10-23 (CARRIER_REPRESENTATIVE script): set to true — with the
-  // address the rep gave, if any — only when the contact asked for the update
-  // email to be sent/resent, so MDR can act on it (MDR sends the emails
-  // itself). Omitted entirely when no email was requested; no new event type.
-  email_requested?: boolean;
-  requested_email?: string | null;
+  // Added 2026-10-23 (CARRIER_REPRESENTATIVE script): true — with the address
+  // the rep gave, if any — only when the contact asked for the update email to
+  // be sent/resent, so MDR can act on it (MDR sends the emails itself). Always
+  // present, `null` when no email was requested (MDR asked for null, not
+  // omission, 2026-10-26); no new event type.
+  email_requested: boolean | null;
+  requested_email: string | null;
 }
 
 export interface ShipmentResult {

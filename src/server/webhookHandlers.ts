@@ -395,16 +395,14 @@ function buildCommonResult(
     ),
     contacts_confirmed: (structured.contacts_confirmed as boolean) ?? null,
     // Call-level flag from the reportEmailRequested tool, repeated on each
-    // shipment's result; omitted when nobody asked for the email.
-    ...(toolFlags?.email_requested
-      ? {
-          email_requested: true,
-          requested_email:
-            typeof toolFlags.requested_email === "string" && EMAIL_PATTERN.test(toolFlags.requested_email.trim())
-              ? toolFlags.requested_email.trim()
-              : null,
-        }
-      : {}),
+    // shipment's result; null when nobody asked for the email.
+    email_requested: toolFlags?.email_requested ? true : null,
+    requested_email:
+      toolFlags?.email_requested &&
+      typeof toolFlags.requested_email === "string" &&
+      EMAIL_PATTERN.test(toolFlags.requested_email.trim())
+        ? toolFlags.requested_email.trim()
+        : null,
   };
 }
 

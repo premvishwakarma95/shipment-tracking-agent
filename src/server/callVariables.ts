@@ -8,6 +8,7 @@ import {
   contactUpdateQuestions,
   carrierRepScript,
   carrierRepShipmentGuide,
+  carrierRepContactQuestions,
   DEFAULT_STATUS_QUESTIONS,
   DRIVER_ASSIGNED_BLOCK,
   driverOnRecordBlock,
@@ -139,16 +140,25 @@ function carrierRepOpening(shipment: ShipmentLike, id: string, statusKey: string
   const showing = phrase ? (first ? `It's currently showing as ${phrase}.` : `We're showing this one as ${phrase}.`) : "";
   const lead = first ? "Perfect! Let's start with shipment" : "Alright, the next one is shipment";
   const text = `${lead} ${spokenIdForCarrier(id)}${route ? `, ${route}` : ""}. ${showing}`.trim();
-  const words = id
-    .replace(/\D/g, "")
+  const words = spokenIdForCarrier(id)
     .split("")
-    .map((d) => DIGIT_WORDS[Number(d)])
-    .join(" ");
-  return `When you start this shipment, say this, starting with "${lead}" (every digit of the ID, including the last — the ID has ${idDigitCount(id)} digits, in words: ${words}; never skip or merge a digit): "${text}" This overrides any "Now, for a different shipment…" wording elsewhere. Then ask the open question below.`;
+    .map((ch) => (/\d/.test(ch) ? DIGIT_WORDS[Number(ch)] : ch === "," ? "," : ""))
+    .filter(Boolean)
+    .join(" ")
+    .replace(/ ,/g, ",");
+  return `When you start this shipment, say this, starting with "${lead}" (every digit of the ID, including the last — the ID has ${idDigitCount(id)} digits, said in groups; in words: ${words}; never skip, merge or change a digit — read exactly these digits, not a similar-looking ID): "${text}" This overrides any "Now, for a different shipment…" wording elsewhere. Then ask the open question below.`;
 }
 
+// Digits in groups ("1 3 1, 9 5 4, 1 4 7"): read as one run, the model kept
+// "correcting" the real ID 131954147 to the more familiar 1 3 1 9 4 … pattern
+// and dropped the 5 (4 of 7 local calls, 2026-10-26).
 function spokenIdForCarrier(id: string): string {
-  return id.replace(/\D/g, "").split("").join(" ") || id;
+  const digits = id.replace(/\D/g, "");
+  if (!digits) return id;
+  const size = digits.length % 3 === 0 ? 3 : 4;
+  const groups: string[] = [];
+  for (let i = 0; i < digits.length; i += size) groups.push(digits.slice(i, i + size).split("").join(" "));
+  return groups.join(", ");
 }
 
 function renderShipmentBlock(
@@ -194,18 +204,21 @@ function renderShipmentBlock(
   const statusKey = resolveStatusKey(status);
 
   const onRecord = driverOnRecord(shipment);
-  const defaultQuestions =
-    statusKey === "CONTACT_UPDATE_REQUEST"
-      ? contactUpdateQuestions(isDispatcher, onRecord)
-      : statusKey === "IN_TRANSIT" && !spokenSchedule(shipment, statusKey, now)
-        ? inTransitQuestions(isDispatcher, false)
-        : carrierRep
-          ? carrierRepShipmentGuide({
-              first: index === 0,
-              isPickup: statusKey === "PICKUP_TODAY" || statusKey === "DISPATCHED",
-              defaults: questionsForStatusKey(statusKey, true),
-            })
-          : questionsForStatusKey(statusKey, isDispatcher);
+  const noScheduleTransit = statusKey === "IN_TRANSIT" && !spokenSchedule(shipment, statusKey, now);
+  const statusDefaults = (dispatcherWording: boolean) =>
+    noScheduleTransit ? inTransitQuestions(dispatcherWording, false) : questionsForStatusKey(statusKey, dispatcherWording);
+  let defaultQuestions: string;
+  if (statusKey === "CONTACT_UPDATE_REQUEST") {
+    defaultQuestions = carrierRep ? carrierRepContactQuestions(onRecord) : contactUpdateQuestions(isDispatcher, onRecord);
+  } else if (carrierRep) {
+    defaultQuestions = carrierRepShipmentGuide({
+      first: index === 0,
+      isPickup: statusKey === "PICKUP_TODAY" || statusKey === "DISPATCHED",
+      defaults: statusDefaults(true),
+    });
+  } else {
+    defaultQuestions = statusDefaults(isDispatcher);
+  }
 
   return `
 ## Shipment ${index + 1}: ${id}${status ? ` — status: ${status}` : ""}

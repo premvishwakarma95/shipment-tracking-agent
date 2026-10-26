@@ -370,7 +370,19 @@ shipments (IN_TRANSIT + DISPATCHED), `calling_from: "MyDrayRate"`.
 - [x] **TC-CR-05 resend** — address confirmed, resend line, `email_requested:
   true` + `requested_email` on every shipment; unreached shipments say the
   contact asked for a resend (not "Not discussed") — code fallback retest pending.
-- [ ] **TC-CR-06 staging run** after deploy.
+- [x] **TC-CR-06 contact check (CONTACT_UPDATE_REQUEST, carrier rep)** — driver
+  on record confirmed, changed driver (number read back, `driver_confirmed`
+  false), changed dispatcher, number read from the record is not a correction;
+  never asks the rep about their own phone/email/dispatcher role.
+- [x] **TC-CR-07 nulls** — `email_requested`, `requested_email`, `driver`,
+  `dispatcher` present and `null` when not applicable.
+- [ ] **TC-CR-08 shipment ID digits** — 9-digit ID (131954147) read in groups,
+  no dropped digit (retest after the grouping change).
+- [ ] **TC-CR-09 late answer** — a person who says "Hello?" after ~8 s gets the
+  introduction, not the voicemail script; a real voicemail is still detected.
+- [ ] **TC-CR-10 interruption** — deferred: a single "Hello?" does not stop the
+  agent (`stopSpeakingPlan.numWords`).
+- [ ] **TC-CR-11 staging run** after deploy.
 
 ## Known gaps (don't re-file)
 
