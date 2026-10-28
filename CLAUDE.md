@@ -784,9 +784,10 @@ local time; we do not implement or need that).
   `callVariables.ts` picks it before the generic contact-update set; an IN_TRANSIT
   shipment with no schedule now also uses the carrier guide (with the no-schedule
   questions) instead of bypassing it.
-- **Email resend rules:** after a spelled or corrected address the agent reads
-  the FINAL spelling back and waits for a yes before calling `reportEmailRequested`,
-  says the resend line, and never calls `endCall` in the same turn.
+- **Email resend rules:** the address is spelled back letter by letter only when
+  it is unclear/garbled/corrected (an address on record needs only a yes); then
+  `reportEmailRequested` is called, and the server speaks the resend line + the
+  closing and ends the call (see "Resend wrap-up is done by the SERVER").
 - **Email in the menu (2026-10-26):** when the payload has `contact.email` the
   menu says "We've also sent an email to <address> with an update link" (said
   naturally, not spelled out); without it the generic "We've also sent an email
@@ -796,6 +797,27 @@ local time; we do not implement or need that).
   `handleEndOfCallReport` now has a backstop: if the transcript has "had the email
   resent" and `tool_flags.email_requested` is unset, it sets it (address on
   record) and logs a warning.
+- **Resend wrap-up is done by the SERVER (2026-10-28):** for a
+  `CARRIER_REPRESENTATIVE`, `applyToolCall` (`reportEmailRequested`) calls
+  `sayAndEndCall()` with `EMAIL_RESENT_LINE` + `CARRIER_REP_CLOSING` (constants in
+  `prompt.ts`) and returns a tool result telling the model to say nothing and call
+  no tool. MDR wants the call to simply wrap up after a resend request — no "would
+  you like to give updates / reply by email?" and no spelling unless the address
+  is unclear (address on record: a yes is enough). Why not the model: it called
+  `endCall` right after the tool without saying the line (call 01a18204), and a
+  tool-level `messages` request-complete line made it wait silently for ~15 s
+  (call 01a18214) — that tool message was removed. Side effect handled: Vapi ends
+  such a call with `endedReason: "assistant-ended-call-after-message-spoken"`,
+  which `callOutcome.ts` now maps to `CALL_COMPLETED` (it was unmapped ->
+  `CALL_FAILED`, which would have sent MDR no results and no flag, call 01a1821e);
+  the closing-line check still applies (no closing -> `CALL_HANG`). Trade-off: a
+  resend request always ends the call, skipping any unfinished shipment updates.
+- **Voicemail detection, second tightening (2026-10-28):** `maxRetries` 5 -> 3
+  (startAtSeconds 6, frequencySeconds 5) — a tester silent ~25 s after the
+  introduction, whose phone also announced "This call is now being recorded", was
+  judged voicemail at ~31 s, played the voicemail script and the call ended as
+  `VOICEMAIL` (call 01a1820d). Detection now stops after ~16-21 s. Still a
+  heuristic; retest a real voicemail.
 - **Shipment ID is read in groups** in the carrier opening ("1 3 1, 9 5 4, 1 4
   7", `spokenIdForCarrier`): read as one run, the model "corrected" 131954147 to
   the familiar 1 3 1 9 4… pattern and dropped the 5 in 4 of 7 calls.

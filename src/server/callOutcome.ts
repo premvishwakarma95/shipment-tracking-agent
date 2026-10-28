@@ -25,6 +25,10 @@ const COMPLETION_SIGNAL = /AI:[^\n]*(\bgoodbye\b|drive safe|have a good day|have
 // abrupt customer-ended-call).
 const ENDED_REASON_MAP: Record<string, EventType> = {
   "assistant-ended-call": "CALL_COMPLETED",
+  // Vapi's reason when OUR server ends the call after saying a line (Live Call
+  // Control say + endCallAfterSpoken): the carrier-representative resend wrap-up.
+  // Unmapped it fell through to CALL_FAILED (call 01a1821e).
+  "assistant-ended-call-after-message-spoken": "CALL_COMPLETED",
   "customer-ended-call": "CALL_COMPLETED",
   "assistant-forwarded-call": "CALL_COMPLETED",
   "silence-timed-out": "CALL_HANG",
@@ -130,7 +134,11 @@ export function classifyEventType(
     // reaching a real completion (it wouldn't have spoken endCallMessage/
     // COMPLETION_SIGNAL yet in that case, so the same text check catches
     // it correctly rather than reporting a hollow CALL_COMPLETED).
-    if (endedReason === "customer-ended-call" || endedReason === "assistant-ended-call") {
+    if (
+      endedReason === "customer-ended-call" ||
+      endedReason === "assistant-ended-call" ||
+      endedReason === "assistant-ended-call-after-message-spoken"
+    ) {
       // The closing line in the transcript is the deterministic signal. The
       // extraction's call_ended_abruptly guess is NOT allowed to override
       // it: call A3-C1HFCSUV1IFY had the full closing ("...Drive safe.

@@ -31,6 +31,13 @@ export const END_CALL_MESSAGE = "{{closing_line}} [short pause]";
 // NOT by the LLM and NOT via Vapi's endCallMessage — deterministic exact
 // wording MDR specified, injected the moment reportWrongContact fires with
 // no referral given, immediately followed by a guaranteed hangup.
+// Carrier-representative lines spoken by OUR server (not the model): when the
+// rep asks for the update email to be resent, the server says the resend line
+// plus the closing and ends the call (webhookHandlers.ts, reportEmailRequested).
+export const EMAIL_RESENT_LINE = "Perfect, I've had the email resent. You should receive it shortly.";
+export const CARRIER_REP_CLOSING =
+  "Thanks so much for your help! We really appreciate you taking the time to get these shipments updated. Have a great day!";
+
 export const WRONG_NUMBER_MESSAGE =
   "I'm sorry for the inconvenience. Thank you for letting me know. Have a good day.";
 
@@ -303,7 +310,12 @@ The person on the line is a carrier representative (not the driver or dispatcher
    - New driver: "Could you give me the new driver's name?" then "And the driver's phone number?" ${PHONE_RULES} ${NAME_RULE}
    - New dispatcher (or "the dispatcher information has changed"): "No problem. Could you give me the correct dispatcher's name?" then the phone number, then "And the email address, so we can update our records?" ${PHONE_RULES} ${NAME_RULE} For the email, ask them to spell it letter by letter and read it back to confirm. If the answer is garbled or unclear, ask once more; if they don't have one or don't know it, say "No problem" and leave it empty.
    - Each change applies only to the shipment it was given for. Afterwards, go back to whatever is still open.
-5. Email path. If they prefer to answer by email ("I'll just update everything through email"), say: "Absolutely, that's fine! We've already sent an email with the shipment details and an update link. You can use that to submit the information whenever you're ready." If they have not received it, or ask for it to be sent again, or give a new address, say ${emailAsk} confirm the address (spell it back letter by letter), you MUST call the reportEmailRequested tool with that address FIRST — never say the resend line without having called it, because the tool is how MDR learns the email must be sent — and only then say: "Perfect, I've had the email resent. You should receive it shortly." If you had to ask for the address letter by letter (or they corrected it), read the FINAL spelling back and wait for a clear yes BEFORE calling the tool. Never call endCall in the same turn as reportEmailRequested: say the resend line first, then offer the updates or wrap up. You never send emails yourself and never promise anything beyond that line. If they only say they will answer by email, or are happy with the email already sent and do not want it resent, you MUST NOT call reportEmailRequested — calling it tells MDR to send another email. Call it ONLY when they ask for the email to be sent or resent, or give a new address for it. After the email path, if the rep is also willing to give updates, offer once to take them now; otherwise wrap up.
+5. Email path. If they prefer to answer by email ("I'll just update everything through email"), say: "Absolutely, that's fine! We've already sent an email with the shipment details and an update link. You can use that to submit the information whenever you're ready." and wrap up. If they have not received it, or ask for it to be sent again, or give a new address:
+   - Address on record: say ${emailAsk} Say the address naturally ("test at example dot com"). A yes is enough — do NOT ask them to spell it and do NOT read it back.
+   - New address, or none on record: ask "What's the best email address to send it to?" and listen. If you understood it clearly, accept it with a brief "Got it, thanks" — no spelling, no read-back. ONLY if it is unclear, garbled or confusing (or they correct it) ask them to spell it letter by letter, then read the final spelling back and wait for a yes.
+   - Then you MUST call the reportEmailRequested tool with that address FIRST — never say the resend line without having called it, because the tool is how MDR learns the email must be sent. The moment the tool is called, the system itself says "Perfect, I've had the email resent. You should receive it shortly.", speaks the closing and ends the call. So after calling it say NOTHING (the line would be heard twice) and call no other tool, endCall included. Do NOT ask whether they want to give updates or reply by email. If the rep goes on to give updates by themselves, take them as usual.
+   - You never send emails yourself and never promise anything beyond that line.
+   - If they only say they will answer by email, or are happy with the email already sent and do not want it resent, you MUST NOT call reportEmailRequested — calling it tells MDR to send another email. Call it ONLY when they ask for the email to be sent or resent, or give a new address for it.
 6. Closing. When every shipment you can cover is done, or the rep chooses to finish by email, just call endCall — the system speaks the closing ("Thanks so much for your help! We really appreciate you taking the time to get these shipments updated. Have a great day!"). Do not say a farewell yourself.
 If they have no time now, offer to call back (reportCallbackRequested) instead of pushing on.
 `.trim();

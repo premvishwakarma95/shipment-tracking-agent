@@ -9,6 +9,7 @@ import {
   carrierRepScript,
   carrierRepShipmentGuide,
   carrierRepContactQuestions,
+  CARRIER_REP_CLOSING,
   DEFAULT_STATUS_QUESTIONS,
   DRIVER_ASSIGNED_BLOCK,
   driverOnRecordBlock,
@@ -39,7 +40,7 @@ export function buildCallVariables(doc: CallRequestDoc): Record<string, string> 
     closing_wish: contact.isDriver ? " Drive safe." : " Have a good day.",
     // The whole spoken closing (END_CALL_MESSAGE = "{{closing_line}} [short pause]").
     closing_line: contact.isCarrierRep
-      ? "Thanks so much for your help! We really appreciate you taking the time to get these shipments updated. Have a great day!"
+      ? CARRIER_REP_CLOSING
       : `Alright, thanks for the update.${contact.isDriver ? " Drive safe." : " Have a good day."} Goodbye.`,
     // CARRIER_REPRESENTATIVE only: MDR's revised script (empty for everyone else).
     carrier_rep_script: contact.isCarrierRep

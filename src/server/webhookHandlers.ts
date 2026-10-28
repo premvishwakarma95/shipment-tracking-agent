@@ -6,7 +6,7 @@ import { computeEta } from "./etaCalc.js";
 import { sendVoiceWebhookEvent } from "../mdr/api.js";
 import { sayAndEndCall } from "../vapi/callControl.js";
 import { getCall } from "../vapi/calls.js";
-import { WRONG_NUMBER_MESSAGE } from "../assistant/prompt.js";
+import { WRONG_NUMBER_MESSAGE, EMAIL_RESENT_LINE, CARRIER_REP_CLOSING } from "../assistant/prompt.js";
 import type {
   CommonCallResult,
   ContactInfo,
@@ -48,8 +48,8 @@ export async function handleToolCalls(message: {
 
   for (const call of message.toolCallList ?? []) {
     try {
-      await applyToolCall(doc, call);
-      results.push({ toolCallId: call.id, result: "ok" });
+      const outcome = await applyToolCall(doc, call);
+      results.push({ toolCallId: call.id, result: outcome ?? "ok" });
     } catch (err) {
       // One bad tool call must not kill the rest of the batch.
       console.error(`[webhookHandlers] tool call ${call.function.name} failed`, err);
@@ -61,7 +61,7 @@ export async function handleToolCalls(message: {
   return { results };
 }
 
-async function applyToolCall(doc: CallRequestDoc, call: VapiToolCall) {
+async function applyToolCall(doc: CallRequestDoc, call: VapiToolCall): Promise<string | undefined> {
   const args = call.function.arguments ?? {};
 
   switch (call.function.name) {
@@ -90,6 +90,14 @@ async function applyToolCall(doc: CallRequestDoc, call: VapiToolCall) {
       // email_requested in each shipment's result, see buildCommonResult.
       doc.tool_flags.email_requested = true;
       doc.tool_flags.requested_email = (args.requested_email as string) ?? null;
+      // Carrier representative: MDR wants the call to simply wrap up after a
+      // resend request. The model either skipped the resend line and hung up, or
+      // (with a tool-level message) went silent for ~15 s (calls 01a18204,
+      // 01a18214), so OUR server says the line + closing and ends the call.
+      if (doc.contact?.type === "CARRIER_REPRESENTATIVE" && doc.control_url) {
+        await sayAndEndCall(doc.control_url, `${EMAIL_RESENT_LINE} ${CARRIER_REP_CLOSING}`);
+        return "Recorded. The system is confirming the resend to the caller and ending the call — say nothing and call no tool.";
+      }
       return;
     case "flagHumanEscalation":
       // Call-level only — see mdr/types.ts's CommonCallResult.

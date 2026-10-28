@@ -188,3 +188,9 @@ Update 2026-10-26 (later): when the request carries `contact.email`, the options
 menu says "We've also sent an email to <address> with an update link"; otherwise
 the generic wording. A resend request always sets `email_requested` (+ the address
 on record or the new one), including if the agent forgot to record it mid-call.
+
+Update 2026-10-28: when a carrier representative asks for the update email to be
+resent, the agent only confirms ("Perfect, I've had the email resent. You should
+receive it shortly."), thanks them and ends the call — it does not offer to take
+updates or ask whether they will reply by email, and spells the address back only
+if it is unclear. The event stays `CALL_COMPLETED` with `email_requested: true`.

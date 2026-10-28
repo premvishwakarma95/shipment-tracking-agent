@@ -152,8 +152,15 @@ const assistantConfig = {
     // person who answered late ("Hello?" at ~9 s) as a voicemail and played the
     // voicemail script to them (call 01a17719). Check later and less often; a
     // real voicemail greeting is still caught well within these ~26 s.
+    //
+    // maxRetries 5 -> 3 (2026-10-28): with 5 checks the detector was still
+    // judging at ~31 s, and a tester who stayed silent for ~25 s after our
+    // introduction (phone also played "This call is now being recorded") was
+    // classified as voicemail and cut off with the voicemail script (call
+    // 01a1820d, event VOICEMAIL). Now it stops looking after ~16-21 s, which
+    // still covers a real voicemail greeting.
     backoffPlan: {
-      maxRetries: 5,
+      maxRetries: 3,
       startAtSeconds: 6,
       frequencySeconds: 5,
     },

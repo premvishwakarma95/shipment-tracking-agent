@@ -387,7 +387,13 @@ shipments (IN_TRANSIT + DISPATCHED), `calling_from: "MyDrayRate"`.
 - [ ] **TC-CR-12 resend flag** — "please resend" -> `email_requested: true` +
   `requested_email` (address on record or the new one), even if the agent forgot
   the tool (transcript backstop).
-- [ ] **TC-CR-13 staging run** after deploy.
+- [ ] **TC-CR-13 resend wrap-up** — "please resend": the resend line and the
+  closing play back to back, the call ends (no silence), event `CALL_COMPLETED`
+  with `email_requested: true`; no "give updates / reply by email?" question.
+- [ ] **TC-CR-14 long silence** — silent ~20 s after the introduction, then
+  answer: normal conversation, no voicemail script / `VOICEMAIL` event; a real
+  voicemail is still detected.
+- [ ] **TC-CR-15 staging run** after deploy.
 
 ## Known gaps (don't re-file)
 
