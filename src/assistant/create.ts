@@ -147,7 +147,12 @@ const assistantConfig = {
     },
   ],
   voicemailDetection: {
-    provider: "vapi",
+    // "vapi" -> "google" (2026-10-30): the audio-based "vapi" detector took a
+    // person's phone saying "This call is now being recorded" for a voicemail
+    // greeting and cut the call with the voicemail script (production calls
+    // 01a18b48 / 01a18b4b, earlier 01a1820d). "google" judges the transcript,
+    // so a live "Hello? Please continue" is recognised as a person.
+    provider: "google",
     // Relaxed 2026-10-26: starting at 2 s with a check every 2.5 s misread a
     // person who answered late ("Hello?" at ~9 s) as a voicemail and played the
     // voicemail script to them (call 01a17719). Check later and less often; a

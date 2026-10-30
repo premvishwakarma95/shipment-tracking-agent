@@ -935,3 +935,6 @@ handles both the message and the hangup.
   non-driver contact types, multi-shipment calls with the new scripts, and a
   staging run of all five statuses (the 2026-10-14 scripts were tested on
   local calls only; see `docs/test-cases.md`).
+
+## Voicemail detection provider (2026-10-30)
+`voicemailDetection.provider` changed `vapi` -> `google` (transcript-based). The audio-based detector classified answered calls as voicemail when the callee's phone played "This call is now being recorded" (production calls 01a18b48 / 01a18b4b), playing the voicemail script mid-conversation. Re-verify a real voicemail still produces a `VOICEMAIL` event; revert to `vapi` if not.
