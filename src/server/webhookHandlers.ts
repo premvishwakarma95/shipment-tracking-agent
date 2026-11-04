@@ -6,6 +6,7 @@ import { computeEta } from "./etaCalc.js";
 import { sendVoiceWebhookEvent } from "../mdr/api.js";
 import { sayAndEndCall, endCallSilently } from "../vapi/callControl.js";
 import { getCall } from "../vapi/calls.js";
+import { resolveStatusKey } from "./callVariables.js";
 import { WRONG_NUMBER_MESSAGE, EMAIL_RESENT_LINE, CARRIER_REP_CLOSING } from "../assistant/prompt.js";
 import type {
   CommonCallResult,
@@ -443,7 +444,7 @@ const NOT_REACHED_SUMMARY = "Not discussed on this call.";
 // than silently vanishing from the response). Each entry's data comes from
 // the matching item in the post-call structured extraction's `shipments[]`
 // array (see resultSchema.ts), matched by shipment_id.
-function buildShipmentResults(
+export function buildShipmentResults(
   doc: CallRequestDoc,
   structured: Record<string, unknown>,
 ): ShipmentResult[] {
@@ -519,6 +520,31 @@ function buildCommonResult(
   // asked for the update email to be (re)sent and gave no update: say so
   // instead of "Not discussed on this call." (checked 2026-10-24, LOCAL-CR-008).
   const emailOnlyShipment = notReached && Boolean(toolFlags?.email_requested);
+  const driver = contactInfoFromFlatFields(structured.driver_name, structured.driver_phone, structured.driver_email);
+  const dispatcher = contactInfoFromFlatFields(
+    structured.dispatcher_name,
+    structured.dispatcher_phone,
+    structured.dispatcher_email,
+  );
+  const etaValue = computeEta(structured, inboundShipment, callTime);
+  // CONTACT_UPDATE_REQUEST only (MDR, 2026-11-04): derived in code from what was
+  // actually captured, not guessed by the model. Confirming unchanged contacts is
+  // not an update (contacts_confirmed, all contact fields null). driver_assigned /
+  // driver_confirmed are contact answers, so they do not count as shipment info.
+  const isContactUpdateShipment = resolveStatusKey(String(inboundShipment.status ?? "")) === "CONTACT_UPDATE_REQUEST";
+  const shipmentInfoGiven = [
+    structured.current_location,
+    etaValue,
+    structured.delay,
+    structured.delay_minutes,
+    structured.delay_reason,
+    structured.delivery_completed,
+    structured.delivery_completed_at,
+    structured.pickup_completed,
+    structured.pickup_completed_at,
+    structured.equipment_assigned,
+  ].some((v) => v !== undefined && v !== null && v !== "") ||
+    (structured.appointment_status !== undefined && structured.appointment_status !== null && structured.appointment_status !== "UNKNOWN");
   return {
     driver_confirmed: (structured.driver_confirmed as boolean) ?? null,
     driver_assigned: (structured.driver_assigned as boolean) ?? null,
@@ -532,7 +558,7 @@ function buildCommonResult(
     current_location: (structured.current_location as string) ?? null,
     // Computed in code from what the caller said (eta_kind + numbers) and
     // the shipment's own schedule — see etaCalc.ts.
-    eta: computeEta(structured, inboundShipment, callTime),
+    eta: etaValue,
 
     delay: (structured.delay as boolean) ?? null,
     delay_minutes: (structured.delay_minutes as number) ?? null,
@@ -581,12 +607,8 @@ function buildCommonResult(
     // object) to improve extraction reliability; reconstructed into the
     // nested ContactInfo shape here since that's the unchanged, confirmed
     // outbound contract to MDR. See resultSchema.ts's file header comment.
-    driver: contactInfoFromFlatFields(structured.driver_name, structured.driver_phone, structured.driver_email),
-    dispatcher: contactInfoFromFlatFields(
-      structured.dispatcher_name,
-      structured.dispatcher_phone,
-      structured.dispatcher_email,
-    ),
+    driver,
+    dispatcher,
     contacts_confirmed: (structured.contacts_confirmed as boolean) ?? null,
     // Call-level flag from the reportEmailRequested tool, repeated on each
     // shipment's result; null when nobody asked for the email.
@@ -597,6 +619,8 @@ function buildCommonResult(
       EMAIL_PATTERN.test(toolFlags.requested_email.trim())
         ? toolFlags.requested_email.trim()
         : null,
+    shipment_update: isContactUpdateShipment ? !notReached && shipmentInfoGiven : null,
+    contact_update: isContactUpdateShipment ? !notReached && (driver !== null || dispatcher !== null) : null,
   };
 }
 

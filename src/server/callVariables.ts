@@ -337,7 +337,7 @@ function normalizeStatusKey(status: string): string {
     .replace(/^_+|_+$/g, "");
 }
 
-function resolveStatusKey(status: string): keyof typeof STATUS_QUESTIONS | null {
+export function resolveStatusKey(status: string): keyof typeof STATUS_QUESTIONS | null {
   if (!status) return null;
 
   const normalized = normalizeStatusKey(status);

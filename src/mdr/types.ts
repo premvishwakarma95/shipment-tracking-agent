@@ -149,6 +149,12 @@ export interface CommonCallResult {
   // omission, 2026-10-26); no new event type.
   email_requested: boolean | null;
   requested_email: string | null;
+  // Added 2026-11-04 (MDR): only for CONTACT_UPDATE_REQUEST shipments, `null` for
+  // every other status. contact_update = the contact gave new/changed driver or
+  // dispatcher details; shipment_update = they gave shipment info (location, ETA,
+  // delay, delivery/pickup, appointment, equipment). Neither given = false/false.
+  shipment_update: boolean | null;
+  contact_update: boolean | null;
 }
 
 export interface ShipmentResult {

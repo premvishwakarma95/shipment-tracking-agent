@@ -420,6 +420,10 @@ CallRequest (`tool_flags.ivr_steps`, `ivr_failure_reason`) and the webhook event
 - [ ] **TC-IVR-10b hold after key press (BBL Freight, call 01a1a4fe)** — after pressing 2 only recorded messages play: agent silent, call ended by the server after ~90 s, event `NO_ACTION`, `ivr_navigation.outcome = IVR_NO_ANSWER`, steps kept.
 - [ ] **TC-IVR-11 staging run** after deploy.
 
+### shipment_update / contact_update (2026-11-04)
+- [x] **TC-CU-01 logic check (code level)** — contact only -> contact_update true / shipment_update false; shipment info only -> the reverse; both -> true/true; contacts confirmed unchanged -> false/false; other status -> null/null; unreached CONTACT_UPDATE_REQUEST -> false/false.
+- [ ] **TC-CU-02 real call** — CONTACT_UPDATE_REQUEST dispatcher/driver call with (a) contact change only, (b) a volunteered ETA only, (c) both.
+
 ## Known gaps (don't re-file)
 
 - No automated test suite yet — all of the above are manual/curl-driven.

@@ -176,3 +176,8 @@ project's docs did.
 - **To tell MDR:** new `ivr_navigation.outcome` / reason `IVR_NO_ANSWER` (menu navigated, then only recorded messages / hold, no person) — also `NO_ACTION`. MDR has no other IVR numbers; only BBL Freight is available for real-menu tests.
 - **Open:** exact `NO_ACTION` payload shape on MDR's side (we send `call_summary`, `recording_url`, `transcript`).
 - **Waiting on MDR:** 5-6 real IVR phone numbers (simple, nested, hard-to-match, ends in voicemail, asks for extension / account number, plus BBL Freight) for local testing before staging.
+
+## shipment_update / contact_update (2026-11-04, requested by MDR)
+- **Added:** two per-shipment result fields for CONTACT_UPDATE_REQUEST calls (see CLAUDE.md). `null` for other statuses (confirmed by the user), false/false when neither was given.
+- **Open (confirm with MDR):** boolean `true`/`false` vs "yes"/"no" strings; whether confirming unchanged contacts should count as a contact update (we say no).
+
