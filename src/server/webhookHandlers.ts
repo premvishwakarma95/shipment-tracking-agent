@@ -4,12 +4,15 @@ import { normalizeMdrTimestamp } from "./timeFormat.js";
 import { normalizePhoneE164 } from "./phoneFormat.js";
 import { computeEta } from "./etaCalc.js";
 import { sendVoiceWebhookEvent } from "../mdr/api.js";
-import { sayAndEndCall } from "../vapi/callControl.js";
+import { sayAndEndCall, endCallSilently } from "../vapi/callControl.js";
 import { getCall } from "../vapi/calls.js";
 import { WRONG_NUMBER_MESSAGE, EMAIL_RESENT_LINE, CARRIER_REP_CLOSING } from "../assistant/prompt.js";
 import type {
   CommonCallResult,
   ContactInfo,
+  IvrNavigation,
+  IvrOutcome,
+  IvrStep,
   PartialShipmentResult,
   ShipmentResult,
   VoiceWebhookEvent,
@@ -61,6 +64,109 @@ export async function handleToolCalls(message: {
   return { results };
 }
 
+// IVR navigation limits (2026-11-03): menu depth, total key presses.
+const IVR_MAX_DEPTH = 4;
+const IVR_MAX_PRESSES = 6;
+const IVR_FAILURE_REASONS = ["IVR_NO_MATCH", "IVR_DEAD_END", "IVR_LOOP", "IVR_NO_ANSWER"];
+// After a key press, how long recorded messages / hold music may play with no person
+// coming on before the server ends the call (IVR_NO_ANSWER). Real BBL Freight call
+// 01a1a4fe: >2 minutes of marketing messages after pressing 2, no person.
+const IVR_HOLD_TIMEOUT_MS = (Number(process.env.IVR_HOLD_TIMEOUT_SECONDS) || 90) * 1000;
+const ivrHoldTimers = new Map<string, NodeJS.Timeout>();
+// The agent's own introduction is the proof that a person came on after the menu.
+const INTRO_SPOKEN = /AI:[^\n]*this is Everly/i;
+
+function clearIvrHoldTimer(vapiCallId: string): void {
+  const t = ivrHoldTimers.get(vapiCallId);
+  if (t) clearTimeout(t);
+  ivrHoldTimers.delete(vapiCallId);
+}
+
+// (Re)starts the wait-limit timer after each menu key press. If the call is still
+// running when it fires and the agent has not introduced itself, nobody came on.
+function startIvrHoldTimer(vapiCallId: string): void {
+  clearIvrHoldTimer(vapiCallId);
+  ivrHoldTimers.set(
+    vapiCallId,
+    setTimeout(() => {
+      ivrHoldTimers.delete(vapiCallId);
+      void (async () => {
+        try {
+          const doc = await resolveByVapiCallId(vapiCallId);
+          if (!doc || doc.lifecycle_status === "COMPLETED" || doc.tool_flags.ivr_failure_reason) return;
+          const call = await getCall(vapiCallId);
+          if (call.endedAt || INTRO_SPOKEN.test(call.transcript ?? "")) return;
+          doc.tool_flags.ivr_failure_reason = "IVR_NO_ANSWER";
+          await doc.save();
+          console.warn(`[webhookHandlers] ${vapiCallId}: no person after the menu for ${IVR_HOLD_TIMEOUT_MS / 1000}s — ending call (IVR_NO_ANSWER)`);
+          if (doc.control_url) await endCallSilently(doc.control_url);
+        } catch (err) {
+          console.error("[webhookHandlers] IVR hold timer failed", err);
+        }
+      })();
+    }, IVR_HOLD_TIMEOUT_MS),
+  );
+}
+
+// Path through the phone menu for the result; null when no menu was met.
+function buildIvrNavigation(doc: CallRequestDoc, eventType: string): IvrNavigation | null {
+  const steps = (doc.tool_flags.ivr_steps ?? []) as IvrStep[];
+  const failure = doc.tool_flags.ivr_failure_reason ?? null;
+  if (steps.length === 0 && !failure) return null;
+  const outcome: IvrOutcome = failure
+    ? (failure as IvrOutcome)
+    : eventType === "VOICEMAIL"
+      ? "VOICEMAIL"
+      : "REACHED_PERSON";
+  return { detected: true, outcome, reason: failure, steps };
+}
+
+// Keys pressed with Vapi's built-in dtmf tool never reach our webhook; read them
+// (and the menu text just before each one) from the end-of-call message log.
+function deriveIvrStepsFromMessages(messages: Array<Record<string, any>> | undefined): IvrStep[] {
+  const steps: IvrStep[] = [];
+  let lastHeard = "";
+  for (const m of messages ?? []) {
+    if (m.role === "user" && typeof m.message === "string") lastHeard = m.message.trim();
+    for (const t of m.toolCalls ?? []) {
+      if (t?.function?.name !== "dtmf") continue;
+      let keys = "";
+      try {
+        const a = typeof t.function.arguments === "string" ? JSON.parse(t.function.arguments) : t.function.arguments;
+        keys = String(a?.keys ?? "");
+      } catch {
+        /* unreadable arguments: keep empty */
+      }
+      steps.push({
+        level: steps.length + 1,
+        menu_options: lastHeard ? [lastHeard.slice(0, 300)] : [],
+        key_pressed: keys,
+        option_selected: null,
+        confidence: null,
+      });
+    }
+  }
+  return steps;
+}
+
+const IVR_REASON_TEXT: Record<string, string> = {
+  IVR_NO_MATCH: "no option on the menu was suitable for a shipment update",
+  IVR_DEAD_END: "the menu led to a dead end",
+  IVR_LOOP: "the menu kept repeating",
+  IVR_NO_ANSWER: "no person came on the line after the menu (only recorded messages or hold music)",
+};
+
+// call_summary for a NO_ACTION call: describes the phone-menu flow, not a conversation.
+function ivrCallSummary(doc: CallRequestDoc): string {
+  const steps = (doc.tool_flags.ivr_steps ?? []) as IvrStep[];
+  const why = IVR_REASON_TEXT[doc.tool_flags.ivr_failure_reason ?? ""] ?? "no suitable option was found";
+  const path =
+    steps.length > 0
+      ? `The agent navigated ${steps.length} menu level${steps.length === 1 ? "" : "s"} (keys pressed: ${steps.map((st) => st.key_pressed).join(", ")})`
+      : "The agent pressed no key";
+  return `The call reached an automated phone menu (IVR), not a person. ${path}, but ${why}, so the call was ended. No shipment update was collected on this call.`;
+}
+
 async function applyToolCall(doc: CallRequestDoc, call: VapiToolCall): Promise<string | undefined> {
   const args = call.function.arguments ?? {};
 
@@ -106,6 +212,36 @@ async function applyToolCall(doc: CallRequestDoc, call: VapiToolCall): Promise<s
       doc.tool_flags.human_escalation_required = true;
       doc.tool_flags.escalation_reason = (args.escalation_reason as string) ?? null;
       return;
+    case "reportIvrStep": {
+      const steps = [...((doc.tool_flags.ivr_steps ?? []) as IvrStep[])];
+      const options = Array.isArray(args.menu_options) ? (args.menu_options as unknown[]).map(String) : [];
+      const key = String(args.key_pressed ?? "");
+      const menuKey = options.map((o) => o.toLowerCase().replace(/\s+/g, " ").trim()).sort().join("|");
+      const seen = steps.filter(
+        (s) => s.menu_options.map((o) => o.toLowerCase().replace(/\s+/g, " ").trim()).sort().join("|") === menuKey,
+      ).length;
+      steps.push({
+        level: Number(args.level) || steps.length + 1,
+        menu_options: options,
+        key_pressed: key,
+        option_selected: typeof args.option_selected === "string" ? args.option_selected : null,
+        confidence: typeof args.confidence === "number" ? args.confidence : null,
+      });
+      doc.tool_flags.ivr_steps = steps;
+      startIvrHoldTimer(doc.vapi_call_id as string);
+      if (seen >= 2) return "This same menu has now repeated three times — stop. Call reportIvrFailure with IVR_LOOP.";
+      if (steps.length >= IVR_MAX_PRESSES || steps[steps.length - 1]!.level > IVR_MAX_DEPTH) {
+        return "Navigation limit reached — stop. Call reportIvrFailure with IVR_DEAD_END.";
+      }
+      return "ok — listen to the next menu. If a person answers, start the introduction.";
+    }
+    case "reportIvrFailure": {
+      const reason = String(args.reason ?? "");
+      doc.tool_flags.ivr_failure_reason = IVR_FAILURE_REASONS.includes(reason) ? reason : "IVR_DEAD_END";
+      clearIvrHoldTimer(doc.vapi_call_id as string);
+      if (doc.control_url) await endCallSilently(doc.control_url);
+      return "Recorded. The call is ending — say nothing.";
+    }
     default:
       throw new Error(`unknown tool: ${call.function.name}`);
   }
@@ -129,6 +265,7 @@ export async function handleEndOfCallReport(message: {
   startedAt?: string;
   endedAt?: string;
   analysis?: { structuredData?: Record<string, unknown> };
+  artifact?: { messages?: Array<Record<string, any>> };
 }) {
   const doc = await resolveByVapiCallId(message.call.id);
   if (!doc) {
@@ -164,6 +301,39 @@ export async function handleEndOfCallReport(message: {
     doc.tool_flags.requested_email = doc.contact?.email ?? null;
     console.warn(`[webhookHandlers] ${message.call.id}: resend line spoken but reportEmailRequested not called — flag set from transcript`);
   }
+  // The keys actually pressed (Vapi's dtmf tool) come from Vapi's own message log —
+  // authoritative, unlike reportIvrStep which the model skips or mislabels (calls
+  // 01a1a03d, 01a1a0c0). The model's reported menu options / chosen option / confidence
+  // are merged in by position when it did report.
+  const derived = deriveIvrStepsFromMessages(message.artifact?.messages);
+  if (derived.length > 0) {
+    const reported = (doc.tool_flags.ivr_steps ?? []) as IvrStep[];
+    if (reported.length !== derived.length) {
+      console.warn(`[webhookHandlers] ${message.call.id}: ${derived.length} dtmf press(es) vs ${reported.length} reportIvrStep call(s) — using the message log`);
+    }
+    doc.tool_flags.ivr_steps = derived.map((d, i) => {
+      const r = reported[i];
+      return {
+        level: i + 1,
+        menu_options: r && r.key_pressed === d.key_pressed && r.menu_options.length ? r.menu_options : d.menu_options,
+        key_pressed: d.key_pressed,
+        option_selected: r && r.key_pressed === d.key_pressed ? r.option_selected : null,
+        confidence: r && r.key_pressed === d.key_pressed ? r.confidence : null,
+      };
+    });
+  }
+  clearIvrHoldTimer(message.call.id);
+  // A menu was navigated but no person ever came on (hold messages, then the line
+  // dropped): NO_ACTION, not CALL_HANG. Voicemail endings stay VOICEMAIL.
+  if (
+    (doc.tool_flags.ivr_steps ?? []).length > 0 &&
+    !doc.tool_flags.ivr_failure_reason &&
+    message.endedReason !== "voicemail" &&
+    !INTRO_SPOKEN.test(message.transcript ?? "")
+  ) {
+    doc.tool_flags.ivr_failure_reason = "IVR_NO_ANSWER";
+    console.warn(`[webhookHandlers] ${message.call.id}: menu navigated but no person came on — IVR_NO_ANSWER`);
+  }
   const eventType = classifyEventType(
     message.endedReason,
     doc.tool_flags,
@@ -195,13 +365,20 @@ export async function handleEndOfCallReport(message: {
     status,
     ...result,
   }));
-  doc.call_ended_abruptly = (structured.call_ended_abruptly as boolean) ?? null;
+  if (eventType === "NO_ACTION") {
+    const ivrSummary = ivrCallSummary(doc);
+    doc.structured_result = (doc.structured_result as Array<Record<string, unknown>>).map((r) => ({ ...r, call_summary: ivrSummary }));
+  }
+  // The extraction misreads a phone menu as an abrupt end; not meaningful for NO_ACTION.
+  doc.call_ended_abruptly = eventType === "NO_ACTION" ? null : ((structured.call_ended_abruptly as boolean) ?? null);
   doc.event_type = eventType;
   doc.recording_url = message.recordingUrl ? buildPlayableRecordingUrl(message.call.id) : null;
   doc.transcript = message.transcript ?? null;
   doc.lifecycle_status = "COMPLETED";
 
   const event = buildWebhookEvent(doc, structured, eventType);
+  const ivrNavigation = buildIvrNavigation(doc, eventType);
+  if (ivrNavigation) event.ivr_navigation = ivrNavigation;
   await doc.save();
 
   // Idempotency guard: if a retried end-of-call-report webhook arrives
@@ -511,6 +688,16 @@ function buildWebhookEvent(
         transcript: doc.transcript ?? null,
       };
     }
+
+    case "NO_ACTION":
+      return {
+        event_type: "NO_ACTION",
+        mdr_call_id: doc.mdr_call_id,
+        voice_call_id: voiceCallId,
+        call_summary: ivrCallSummary(doc),
+        recording_url: doc.recording_url ?? null,
+        transcript: doc.transcript ?? null,
+      };
 
     case "CALLBACK_REQUESTED":
       return {

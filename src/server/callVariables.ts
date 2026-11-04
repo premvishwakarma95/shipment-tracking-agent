@@ -36,6 +36,14 @@ export function buildCallVariables(doc: CallRequestDoc): Record<string, string> 
     // Company name from the payload's calling_from; generic wording if MDR
     // didn't send one (no company name is hardcoded anywhere).
     calling_from: doc.calling_from?.trim() || "our company",
+    // Who is being called, for the phone-menu (IVR) choice in the prompt.
+    contact_type_note:
+      ({
+        DRIVER: "a driver",
+        DISPATCHER: "a dispatcher",
+        SECONDARY_DISPATCHER: "a secondary dispatcher",
+        CARRIER_REPRESENTATIVE: "a carrier representative",
+      } as Record<string, string>)[doc.contact?.type ?? ""] ?? "a carrier contact",
     // Spoken at the very end of the call, drivers only.
     closing_wish: contact.isDriver ? " Drive safe." : " Have a good day.",
     // The whole spoken closing (END_CALL_MESSAGE = "{{closing_line}} [short pause]").

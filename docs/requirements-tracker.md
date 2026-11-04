@@ -169,3 +169,10 @@ project's docs did.
   named to mirror `CallRequestPayload.open_issue` (the inbound field) so
   MDR can round-trip it directly: take this call's output `open_issue` and
   send it back as the next call's input `open_issue`.
+
+## IVR / phone menu handling (2026-11-03, implementation in progress)
+- **Confirmed by MDR:** applies to all contact types; LLM picks the closest option; nested menus; limits (4 levels, 6 presses, same menu 3 times = loop); no match / dead end / loop -> `NO_ACTION` with the reason inside `ivr_navigation`; menu ending in voicemail stays `VOICEMAIL`; person after the menu -> normal script from the start.
+- **Accepted by MDR (Manas):** `NO_ACTION` event type and the optional `ivr_navigation` object. He will tell us if edits are needed.
+- **To tell MDR:** new `ivr_navigation.outcome` / reason `IVR_NO_ANSWER` (menu navigated, then only recorded messages / hold, no person) — also `NO_ACTION`. MDR has no other IVR numbers; only BBL Freight is available for real-menu tests.
+- **Open:** exact `NO_ACTION` payload shape on MDR's side (we send `call_summary`, `recording_url`, `transcript`).
+- **Waiting on MDR:** 5-6 real IVR phone numbers (simple, nested, hard-to-match, ends in voicemail, asks for extension / account number, plus BBL Freight) for local testing before staging.

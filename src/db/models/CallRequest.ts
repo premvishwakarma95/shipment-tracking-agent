@@ -39,6 +39,11 @@ export const EVENT_TYPES = [
   // 2026-09-24, don't reclassify a path between the two without the same
   // kind of explicit confirmation.
   "CALL_HANG",
+  // Added 2026-11-03 per MDR: the call hit a phone menu (IVR) and the agent
+  // found no suitable option / hit a dead end or loop. Not a successful
+  // contact. The reason (IVR_NO_MATCH / IVR_DEAD_END / IVR_LOOP / IVR_NO_ANSWER) goes in the
+  // ivr_navigation object, not in a separate field.
+  "NO_ACTION",
 ] as const;
 
 // Internal-only bookkeeping for where THIS record is in its own lifecycle.
@@ -82,6 +87,11 @@ const ToolFlagsSchema = new Schema(
     // isn't merged into any individual shipment's result.
     human_escalation_required: { type: Boolean, default: false },
     escalation_reason: { type: String, default: null },
+    // IVR (phone menu) navigation, added 2026-11-03. One entry per menu level
+    // the agent answered (see reportIvrStep in webhookHandlers.ts); the failure
+    // reason is set by reportIvrFailure and turns the call into NO_ACTION.
+    ivr_steps: { type: [Schema.Types.Mixed], default: [] },
+    ivr_failure_reason: { type: String, default: null },
   },
   { _id: false },
 );

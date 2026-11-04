@@ -41,3 +41,28 @@ async function postSay(controlUrl: string, content: string, endCallAfterSpoken: 
 export async function sayAndEndCall(controlUrl: string, content: string): Promise<void> {
   await postSay(controlUrl, content, true);
 }
+
+// Ends the call without speaking (IVR dead end: nobody to talk to).
+export async function endCallSilently(controlUrl: string): Promise<void> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    const res = await fetch(controlUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.VAPI_API_KEY ?? ""}`,
+      },
+      body: JSON.stringify({ type: "end-call" }),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      console.error(`[callControl] end-call failed: HTTP ${res.status} ${text.slice(0, 300)}`);
+    }
+  } catch (err) {
+    console.error("[callControl] end-call request failed", err);
+  } finally {
+    clearTimeout(timeout);
+  }
+}

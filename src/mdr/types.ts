@@ -173,9 +173,27 @@ export interface PartialShipmentResult {
   result: Partial<CommonCallResult>;
 }
 
+// Added 2026-11-03: path through a phone menu, for troubleshooting/auditing.
+// Optional on every event; absent when the call never met a menu.
+export interface IvrStep {
+  level: number;
+  menu_options: string[];
+  key_pressed: string;
+  option_selected: string | null;
+  confidence: number | null;
+}
+export type IvrOutcome = "REACHED_PERSON" | "VOICEMAIL" | "IVR_NO_MATCH" | "IVR_DEAD_END" | "IVR_LOOP" | "IVR_NO_ANSWER";
+export interface IvrNavigation {
+  detected: true;
+  outcome: IvrOutcome;
+  reason: string | null;
+  steps: IvrStep[];
+}
+
 interface WebhookEventBase {
   mdr_call_id: string;
   voice_call_id: string | null;
+  ivr_navigation?: IvrNavigation;
 }
 
 // The single MDR webhook (integration guide §5, §10, §13) takes a
@@ -196,6 +214,14 @@ export type VoiceWebhookEvent =
   | (WebhookEventBase & { event_type: "VOICEMAIL" })
   | (WebhookEventBase & { event_type: "BUSY" })
   | (WebhookEventBase & { event_type: "CALL_FAILED" })
+  // Added 2026-11-03: phone menu with no suitable option / dead end / loop.
+  // Reason is in ivr_navigation.outcome.
+  | (WebhookEventBase & {
+      event_type: "NO_ACTION";
+      call_summary: string | null;
+      recording_url: string | null;
+      transcript: string | null;
+    })
   | (WebhookEventBase & {
       event_type: "CALL_DROPPED";
       shipments: PartialShipmentResult[];

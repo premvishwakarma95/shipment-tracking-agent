@@ -79,6 +79,8 @@ script". See
 CLAUDE.md's "Multi-shipment calls" and "MDR multi-shipment
 feedback changes" sections.
 
+**Phone menus (IVR, in progress, local only):** if the call reaches an automated menu the agent presses keys (built-in `dtmf` + `reportIvrStep`) to reach dispatch / carrier services. No suitable option, dead end or loop ends the call silently with event `NO_ACTION`; an optional `ivr_navigation` object lists the steps. See CLAUDE.md's "IVR (phone menu) navigation".
+
 See [docs/call-flow.md](./docs/call-flow.md) for the full diagram and
 [docs/test-cases.md](./docs/test-cases.md) for manual QA scenarios.
 

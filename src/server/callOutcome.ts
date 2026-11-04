@@ -80,6 +80,9 @@ export function classifyEventType(
   callEndedAbruptly?: boolean,
   transcript?: string | null,
 ): EventType {
+  // Phone menu with no usable option / dead end / loop (2026-11-03, MDR): not a
+  // successful contact, whatever Vapi's endedReason says.
+  if (toolFlags?.ivr_failure_reason) return "NO_ACTION";
   if (toolFlags?.wrong_contact) return "WRONG_CONTACT";
   if (toolFlags?.callback_requested) return "CALLBACK_REQUESTED";
 

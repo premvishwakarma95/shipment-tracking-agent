@@ -80,6 +80,44 @@ export function buildTools() {
       },
       server,
     },
+    // Vapi built-in keypad tool (2026-11-03): presses digits on a phone menu.
+    { type: "dtmf" },
+    {
+      type: "function",
+      function: {
+        name: "reportIvrStep",
+        description:
+          "Call this EVERY time you press a key on an automated phone menu (right after pressing it): the menu level (1 for the first menu, 2 for the next...), the options you heard as short strings like '2 Dispatch', the key you pressed, the option text you chose and your confidence 0-1. The answer tells you whether to keep going or stop (then call reportIvrFailure).",
+        parameters: {
+          type: "object",
+          properties: {
+            level: { type: "number" },
+            menu_options: { type: "array", items: { type: "string" } },
+            key_pressed: { type: "string" },
+            option_selected: { type: "string" },
+            confidence: { type: "number" },
+          },
+          required: ["level", "menu_options", "key_pressed"],
+        },
+      },
+      server,
+    },
+    {
+      type: "function",
+      function: {
+        name: "reportIvrFailure",
+        description:
+          "Call this when an automated phone menu gives no suitable option (and no operator/representative option worked), reaches a dead end, or repeats in a loop, or reportIvrStep told you to stop. reason is IVR_NO_MATCH, IVR_DEAD_END, IVR_LOOP or IVR_NO_ANSWER (kept on hold / only recorded messages, no person ever came on). The call ends automatically; say nothing.",
+        parameters: {
+          type: "object",
+          properties: {
+            reason: { type: "string", enum: ["IVR_NO_MATCH", "IVR_DEAD_END", "IVR_LOOP", "IVR_NO_ANSWER"] },
+          },
+          required: ["reason"],
+        },
+      },
+      server,
+    },
     // Vapi built-in, no `server` — it hangs up directly and never reaches
     // our webhook. Without it the assistant has no way to end the call and
     // just waits for the caller until silenceTimeoutSeconds expires.

@@ -395,6 +395,31 @@ shipments (IN_TRANSIT + DISPATCHED), `calling_from: "MyDrayRate"`.
   voicemail is still detected.
 - [ ] **TC-CR-15 staging run** after deploy.
 
+### IVR / phone menu navigation (2026-11-03, local calls only)
+Use the simulator assistant (`+13184089314`) or a real menu number. Check the saved
+CallRequest (`tool_flags.ivr_steps`, `ivr_failure_reason`) and the webhook event.
+
+- [x] **TC-IVR-01 single press** — menu offers carrier services / dispatch: agent
+  stays silent while it plays, presses that key, reaches a person, runs the normal
+  script. Event `CALL_COMPLETED`, `ivr_steps` has 1 step (LOCAL-IVR-105).
+- [x] **TC-IVR-02 nested menu** — 2 -> 2 -> 2, levels numbered 1..3, person answers,
+  normal script from the start (LOCAL-IVR-104).
+- [x] **TC-IVR-03 no suitable option** — unrelated menu (Red Bus): call ends silently,
+  event `NO_ACTION`, `ivr_navigation.outcome = IVR_NO_MATCH`, IVR call summary,
+  `call_ended_abruptly: null`.
+- [x] **TC-IVR-04 dead end** — `IVR_DEAD_END` as `NO_ACTION`.
+- [x] **TC-IVR-05 normal call regression** — non-IVR call: `ivr_steps` empty, no
+  `ivr_navigation`.
+- [ ] **TC-IVR-06 menu ends in voicemail** — event stays `VOICEMAIL`,
+  `ivr_navigation.outcome = VOICEMAIL`.
+- [ ] **TC-IVR-07 loop** — same menu 3 times: `IVR_LOOP`, `NO_ACTION`.
+- [ ] **TC-IVR-08 press limit** — more than 6 presses: call ends, `NO_ACTION`.
+- [ ] **TC-IVR-09 extension / account number requested** — agent does not enter
+  digits: `IVR_NO_MATCH`, `NO_ACTION`.
+- [ ] **TC-IVR-10 real freight IVRs** (BBL Freight + numbers requested from MDR).
+- [ ] **TC-IVR-10b hold after key press (BBL Freight, call 01a1a4fe)** — after pressing 2 only recorded messages play: agent silent, call ended by the server after ~90 s, event `NO_ACTION`, `ivr_navigation.outcome = IVR_NO_ANSWER`, steps kept.
+- [ ] **TC-IVR-11 staging run** after deploy.
+
 ## Known gaps (don't re-file)
 
 - No automated test suite yet — all of the above are manual/curl-driven.
@@ -404,3 +429,4 @@ shipments (IN_TRANSIT + DISPATCHED), `calling_from: "MyDrayRate"`.
   integration test until we're ready to point at the real endpoint.
 - `EMAIL_REQUESTED` (TC-13) has no confirmed MDR event_type — don't file
   this as a bug, it's a tracked open question.
+- IVR: the agent sometimes says a filler word around a menu, and `option_selected` / `confidence` are `null` when the model skips `reportIvrStep` — known, not a bug to re-file.
