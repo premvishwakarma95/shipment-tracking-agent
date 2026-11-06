@@ -561,6 +561,7 @@ changes. All of it lives in `src/assistant/prompt.ts` unless noted.
   plays inline, `&download=1` downloads. The route calls Vapi's
   `/call/{id}/stereo-recording` server-side with the Vapi key (Vapi's own
   recording URL is private). Same approach as Agent-1/2.
+  **Copy-paste tolerance (2026-11-05):** MDR twice copied the link out of the raw JSON, so it ended with `%22,%22voice_call_id%22:…` and the key never matched (401). `recordings.ts` `keyMatches` accepts the exact key, or the exact key followed by a quote / comma / brace / bracket / semicolon / whitespace; anything else (a longer key, extra letters or digits, junk before the key, a truncated or wrong key) is still 401, compared in constant time. The proper fix is on MDR's side: read `recording_url` as a parsed JSON field.
 - **Latency is the voice, not the model.** Per-turn: model ~0.4-0.8s, but
   `eleven_v3` voice spikes 6-10s on some turns (worse on 2026-10-09) and
   Deepgram occasionally 5-9s. Not fixable in prompt/code; the only real lever
