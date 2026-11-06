@@ -417,7 +417,9 @@ CallRequest (`tool_flags.ivr_steps`, `ivr_failure_reason`) and the webhook event
 - [ ] **TC-IVR-09 extension / account number requested** — agent does not enter
   digits: `IVR_NO_MATCH`, `NO_ACTION`.
 - [ ] **TC-IVR-10 real freight IVRs** (BBL Freight + numbers requested from MDR).
-- [ ] **TC-IVR-10b hold after key press (BBL Freight, call 01a1a4fe)** — after pressing 2 only recorded messages play: agent silent, call ended by the server after ~90 s, event `NO_ACTION`, `ivr_navigation.outcome = IVR_NO_ANSWER`, steps kept.
+- [ ] **TC-IVR-10b hold after key press (BBL Freight, call 01a1a4fe)** — after pressing 2 only recorded messages play: agent silent; when the line ends with no person (no introduction in the final transcript) event `NO_ACTION`, `ivr_navigation.outcome = IVR_NO_ANSWER`, steps kept. There is NO server hold timer (it cut a good call off, see CLAUDE.md).
+- [ ] **TC-IVR-10c person answers late (call 01a1ad03)** — a person answers 15-20 s after the key press and the conversation runs > 90 s: the call is NOT cut off, the event is the normal one (`CALL_COMPLETED` / `CALL_HANG`), never `NO_ACTION`; agent introduces itself without filler.
+- [ ] **TC-IVR-10d greeting before options (call 01a1a7f4)** — menu starts with a greeting + extension notice: the agent waits for the options, presses the right key; a failure reported before any option is heard (< 25 s) is refused.
 - [ ] **TC-IVR-11 staging run** after deploy.
 
 ### shipment_update / contact_update (2026-11-04)

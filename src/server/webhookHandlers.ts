@@ -69,45 +69,16 @@ export async function handleToolCalls(message: {
 const IVR_MAX_DEPTH = 4;
 const IVR_MAX_PRESSES = 6;
 const IVR_FAILURE_REASONS = ["IVR_NO_MATCH", "IVR_DEAD_END", "IVR_LOOP", "IVR_NO_ANSWER"];
-// After a key press, how long recorded messages / hold music may play with no person
-// coming on before the server ends the call (IVR_NO_ANSWER). Real BBL Freight call
-// 01a1a4fe: >2 minutes of marketing messages after pressing 2, no person.
-const IVR_HOLD_TIMEOUT_MS = (Number(process.env.IVR_HOLD_TIMEOUT_SECONDS) || 90) * 1000;
-const ivrHoldTimers = new Map<string, NodeJS.Timeout>();
 // The agent's own introduction is the proof that a person came on after the menu.
+// Only reliable on the FINAL transcript: Vapi's live GET /call/{id} has no transcript
+// or messages while the call is running (probed 2026-11-06), so nothing can judge
+// "has a person spoken yet?" mid-call. A server-side hold timer built on that ended a
+// good call at 145 s (call 01a1ad03) and was removed.
 const INTRO_SPOKEN = /AI:[^\n]*this is Everly/i;
-
-function clearIvrHoldTimer(vapiCallId: string): void {
-  const t = ivrHoldTimers.get(vapiCallId);
-  if (t) clearTimeout(t);
-  ivrHoldTimers.delete(vapiCallId);
-}
-
-// (Re)starts the wait-limit timer after each menu key press. If the call is still
-// running when it fires and the agent has not introduced itself, nobody came on.
-function startIvrHoldTimer(vapiCallId: string): void {
-  clearIvrHoldTimer(vapiCallId);
-  ivrHoldTimers.set(
-    vapiCallId,
-    setTimeout(() => {
-      ivrHoldTimers.delete(vapiCallId);
-      void (async () => {
-        try {
-          const doc = await resolveByVapiCallId(vapiCallId);
-          if (!doc || doc.lifecycle_status === "COMPLETED" || doc.tool_flags.ivr_failure_reason) return;
-          const call = await getCall(vapiCallId);
-          if (call.endedAt || INTRO_SPOKEN.test(call.transcript ?? "")) return;
-          doc.tool_flags.ivr_failure_reason = "IVR_NO_ANSWER";
-          await doc.save();
-          console.warn(`[webhookHandlers] ${vapiCallId}: no person after the menu for ${IVR_HOLD_TIMEOUT_MS / 1000}s — ending call (IVR_NO_ANSWER)`);
-          if (doc.control_url) await endCallSilently(doc.control_url);
-        } catch (err) {
-          console.error("[webhookHandlers] IVR hold timer failed", err);
-        }
-      })();
-    }, IVR_HOLD_TIMEOUT_MS),
-  );
-}
+// A first-menu failure report earlier than this (since the call was created) is
+// premature: the greeting/extension notice comes before any option is read out
+// (call 01a1a7f4 failed at ~12 s, before BBL read option 2 at ~20 s).
+const IVR_MIN_SECONDS_BEFORE_FAILURE = 25;
 
 // Path through the phone menu for the result; null when no menu was met.
 function buildIvrNavigation(doc: CallRequestDoc, eventType: string): IvrNavigation | null {
@@ -154,7 +125,7 @@ const IVR_REASON_TEXT: Record<string, string> = {
   IVR_NO_MATCH: "no option on the menu was suitable for a shipment update",
   IVR_DEAD_END: "the menu led to a dead end",
   IVR_LOOP: "the menu kept repeating",
-  IVR_NO_ANSWER: "no person came on the line after the menu (only recorded messages or hold music)",
+  IVR_NO_ANSWER: "no person came on the line after the menu",
 };
 
 // call_summary for a NO_ACTION call: describes the phone-menu flow, not a conversation.
@@ -229,17 +200,26 @@ async function applyToolCall(doc: CallRequestDoc, call: VapiToolCall): Promise<s
         confidence: typeof args.confidence === "number" ? args.confidence : null,
       });
       doc.tool_flags.ivr_steps = steps;
-      startIvrHoldTimer(doc.vapi_call_id as string);
       if (seen >= 2) return "This same menu has now repeated three times — stop. Call reportIvrFailure with IVR_LOOP.";
       if (steps.length >= IVR_MAX_PRESSES || steps[steps.length - 1]!.level > IVR_MAX_DEPTH) {
         return "Navigation limit reached — stop. Call reportIvrFailure with IVR_DEAD_END.";
       }
-      return "ok — listen to the next menu. If a person answers, start the introduction.";
+      return "ok. If a person has spoken to you (a greeting such as the company name, \"dispatch\", \"how can I help?\"), give the introduction now, in full, with no filler first. Otherwise say nothing and keep listening for the next menu or a person.";
     }
     case "reportIvrFailure": {
       const reason = String(args.reason ?? "");
+      // First menu, reported before any option could have been read: refuse and keep listening.
+      const createdAt = (doc as unknown as { createdAt?: Date }).createdAt;
+      const elapsed = createdAt ? (Date.now() - createdAt.getTime()) / 1000 : Infinity;
+      if (
+        (reason === "IVR_NO_MATCH" || reason === "IVR_DEAD_END") &&
+        ((doc.tool_flags.ivr_steps ?? []) as IvrStep[]).length === 0 &&
+        elapsed < IVR_MIN_SECONDS_BEFORE_FAILURE
+      ) {
+        console.warn(`[webhookHandlers] ${doc.vapi_call_id}: ${reason} reported after ${elapsed.toFixed(0)}s with no options heard — refused, keep listening`);
+        return "Not yet — the menu has not finished and its options may still be coming (the greeting or an extension notice is not the menu). Say nothing, keep listening until the options (\"press 1 …\") have been read, and only then, if none fits, call reportIvrFailure again.";
+      }
       doc.tool_flags.ivr_failure_reason = IVR_FAILURE_REASONS.includes(reason) ? reason : "IVR_DEAD_END";
-      clearIvrHoldTimer(doc.vapi_call_id as string);
       if (doc.control_url) await endCallSilently(doc.control_url);
       return "Recorded. The call is ending — say nothing.";
     }
@@ -323,7 +303,6 @@ export async function handleEndOfCallReport(message: {
       };
     });
   }
-  clearIvrHoldTimer(message.call.id);
   // A menu was navigated but no person ever came on (hold messages, then the line
   // dropped): NO_ACTION, not CALL_HANG. Voicemail endings stay VOICEMAIL.
   if (

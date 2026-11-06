@@ -181,3 +181,4 @@ project's docs did.
 - **Added:** two per-shipment result fields for CONTACT_UPDATE_REQUEST calls (see CLAUDE.md). `null` for other statuses (confirmed by the user), false/false when neither was given.
 - **Open (confirm with MDR):** boolean `true`/`false` vs "yes"/"no" strings; whether confirming unchanged contacts should count as a contact update (we say no).
 
+- **Open (found 2026-11-05):** MDR's real requests send `call_type: "CONTACT_UPDATE_REQUEST"` at the top level with the shipment `status` still `"DISPATCHED"`. `shipment_update` / `contact_update` currently key on the shipment status, so they come back `null` for those calls. Ask MDR whether the trigger should be the top-level `call_type` instead.

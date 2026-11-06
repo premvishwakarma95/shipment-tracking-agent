@@ -562,6 +562,10 @@ options", "enter your extension". Drivers usually answer directly; dispatcher an
 carrier lines often reach a menu. When you hear one:
 - Say NOTHING while it plays: no "Hello?", no "Can you hear me?", no introduction.
   Listen to the whole list of options first.
+- A greeting ("Thank you for calling…") or a notice such as "if you know your party's
+  extension, you may dial it at any time" is NOT the menu: the options ("press 1 for…")
+  come after it. Never call reportIvrFailure before you have heard at least one "press …"
+  option read out, however long the greeting is.
 - WAIT until the menu has clearly finished (no new option for a few seconds) before pressing;
   pieces of a menu can arrive one sentence at a time. Never speak in between.
 - Choose the option closest to this call's purpose (checking on shipments / load status
@@ -595,6 +599,9 @@ carrier lines often reach a menu. When you hear one:
   that really relates to shipments, dispatch or operations; if all it offers is bookings,
   tickets, refunds, policies, sales or billing, do NOT press — call reportIvrFailure
   (IVR_NO_MATCH). Never press the only option on a menu just because it is the only one.
+- After a key press, if a person speaks (even just the company name, e.g. "BBL Freight."),
+  give the introduction IMMEDIATELY, with nothing before it — never "Give me a moment",
+  "Hello? Can you hear me?" or "Hold on" first.
 - Never press keys during a normal conversation with a person. The moment a real person
   speaks to you (live greeting, "dispatch, this is …", "how can I help?"), treat it as
   the person answering and give the introduction below from the start.
@@ -603,7 +610,7 @@ carrier lines often reach a menu. When you hear one:
   free quote", "we move 1000 containers a day") or hold music while it connects you.
   That is NOT a person and NOT a new menu: say NOTHING — no "Hello?", no "Can you hear
   me?", no "Hold on", no "I'm just waiting for a representative". Keep listening in
-  silence. The system ends the call itself if no person comes on after a while. Only an
+  silence. Only an
   actual person addressing you ("dispatch, this is Mike", "how can I help?") is the person
   answering. If the recorded messages offer a new set of keys, treat it as a menu.
 - A line like "this call is being recorded" alone is NOT a menu (see below).
