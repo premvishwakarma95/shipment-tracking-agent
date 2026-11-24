@@ -170,12 +170,14 @@ project's docs did.
   MDR can round-trip it directly: take this call's output `open_issue` and
   send it back as the next call's input `open_issue`.
 
-## IVR / phone menu handling (2026-11-03, implementation in progress)
+## IVR / phone menu handling (2026-11-03; live on staging and production since 2026-11-16)
 - **Confirmed by MDR:** applies to all contact types; LLM picks the closest option; nested menus; limits (4 levels, 6 presses, same menu 3 times = loop); no match / dead end / loop -> `NO_ACTION` with the reason inside `ivr_navigation`; menu ending in voicemail stays `VOICEMAIL`; person after the menu -> normal script from the start.
 - **Accepted by MDR (Manas):** `NO_ACTION` event type and the optional `ivr_navigation` object. He will tell us if edits are needed.
 - **To tell MDR:** new `ivr_navigation.outcome` / reason `IVR_NO_ANSWER` (menu navigated, then only recorded messages / hold, no person) — also `NO_ACTION`. MDR has no other IVR numbers; only BBL Freight is available for real-menu tests.
 - **Open:** exact `NO_ACTION` payload shape on MDR's side (we send `call_summary`, `recording_url`, `transcript`).
-- **Waiting on MDR:** 5-6 real IVR phone numbers (simple, nested, hard-to-match, ends in voicemail, asks for extension / account number, plus BBL Freight) for local testing before staging.
+- **Deployed 2026-11-16:** production on `fa75625`, production assistant updated with `assistant:create`. Production test `PROD-IVR-TEST-001` (simulator menu) passed: `CALL_COMPLETED`, `REACHED_PERSON`, delivered to MDR. MDR was told; BBL Freight retest with Frank is theirs to run.
+- **Still untested:** menu ending in voicemail, `IVR_LOOP`, the 6-press limit, extension / account-number menu; filler words around the menu (prompt-only mitigation).
+- **MDR has no other IVR numbers** (only BBL Freight +18885562309, office hours about 6:30 pm their time).
 
 ## shipment_update / contact_update (2026-11-04, requested by MDR)
 - **Added:** two per-shipment result fields for CONTACT_UPDATE_REQUEST calls (see CLAUDE.md). `null` for other statuses (confirmed by the user), false/false when neither was given.

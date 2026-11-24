@@ -621,7 +621,7 @@ changes. All of it lives in `src/assistant/prompt.ts` unless noted.
 - **MDR bearer token** (`MDR_API_AUTH_TOKEN`) for staging was replaced on
   2026-10-09 in both the local and staging-server `.env`.
 
-## Status-based calling scripts (2026-10-14, local until deployed)
+## Status-based calling scripts (2026-10-14, deployed)
 
 MDR's "Status-Based Calling Scripts": the QUESTIONS are unchanged, only the
 calling pattern is — which question to ask or skip from the payload data and
@@ -718,7 +718,7 @@ assistant and need `npm run assistant:create`.
   reach driver" escalation; time zone of spoken/scheduled times (all UTC today);
   a date-only schedule with "on schedule" gives `eta` at `00:00:00`.
 
-## Carrier representative script (2026-10-23, local until deployed)
+## Carrier representative script (2026-10-23, deployed)
 
 MDR's revised Everly script for `contact.type: "CARRIER_REPRESENTATIVE"` ONLY
 (`CARRIER_MAIN` and every other type are unchanged — MDR confirmed). The rep is
@@ -940,8 +940,8 @@ handles both the message and the hangup.
 ## Voicemail detection provider (2026-10-30)
 `voicemailDetection.provider` changed `vapi` -> `google` (transcript-based). The audio-based detector classified answered calls as voicemail when the callee's phone played "This call is now being recorded" (production calls 01a18b48 / 01a18b4b), playing the voicemail script mid-conversation. Re-verify a real voicemail still produces a `VOICEMAIL` event; revert to `vapi` if not.
 
-## IVR (phone menu) navigation (2026-11-03, local only, implementation in progress)
-When the callee line is an automated phone menu, the agent navigates it instead of speaking the script. Not committed, pushed or deployed yet; waiting on real IVR numbers from MDR for local testing before staging.
+## IVR (phone menu) navigation (2026-11-03; live on staging and production since 2026-11-16, commit `fa75625`)
+When the callee line is an automated phone menu, the agent navigates it instead of speaking the script. Deployed: staging 2026-11-06, production 2026-11-16 (`fa75625`, then `npm run assistant:create` against the production assistant). Production was fast-forwarded from the staging checkout on the same server because the GitHub token had been revoked (401); same commit as GitHub `main`. Production check (`PROD-IVR-TEST-001`, simulator menu, call 01a1e31f): menu -> key 2 -> person -> normal script, `CALL_COMPLETED`, `ivr_navigation.outcome = REACHED_PERSON`, delivered to MDR's live webhook; only filler words ("Give me a moment.", "Just a sec. Hello?") seen around the menu. A mid-call hang-up is `CALL_HANG` (existing `classifyEventType` logic), not `NO_ACTION`; `NO_ACTION` is only for menus that failed or where no person came on the line.
 - **MDR rules:** applies to every contact type; the LLM picks the closest option; nested menus allowed; dispatch / carrier services / load status / shipments options always beat generic ones; never enter extension, account, PRO or shipment numbers; when a person answers after the menu, the normal script starts from the beginning.
 - **Tools** (`src/assistant/tools.ts`): Vapi built-in `dtmf` (presses the key; not sent to our webhook), `reportIvrStep` (records level, menu options, key, option selected, confidence) and `reportIvrFailure` (reason `IVR_NO_MATCH` | `IVR_DEAD_END` | `IVR_LOOP`; ends the call silently through `endCallSilently` in `src/vapi/callControl.ts`).
 - **Prompt:** "Automated phone menus (IVR)" section in `src/assistant/prompt.ts` (silent while the menu plays, only offered options, unrelated menus such as booking / billing / sales are NOT a match, one generic "other / operator" press allowed, then fail). `contact_type_note` variable added in `callVariables.ts`.
@@ -964,3 +964,10 @@ Two new booleans on every shipment result (`CommonCallResult`): `shipment_update
 - Neither given = `false` / `false`; a shipment the call never reached = `false` / `false`; both given = `true` / `true`.
 - Booleans (`true`/`false`), like every other flag; MDR said "yes/no" — confirm the format on the call.
 
+
+## BROKER_CALL contact (2026-11-24, MDR, local until deployed)
+MDR added a `BROKER_CALL` call type: the flow and the response are the same as `CONTACT_UPDATE_REQUEST`. MDR confirmed (2026-11-24): the shipments carry `status: CONTACT_UPDATE_REQUEST` and `contact.type` is `BROKER_CALL`. So no `call_type` branching was added (`call_type` is still only stored/echoed); the existing status-based flow and `shipment_update` / `contact_update` (see above) apply unchanged.
+- `BROKER_CALL` is a `CONTACT_TYPES` value (`CallRequest.ts`); before, such a request was rejected with a 400.
+- A broker contact is neither driver nor dispatcher, so `callVariables.ts` renders `carrierRepContactQuestions(onRecord, "a broker contact …")` (prompt.ts, now with a `speaker` parameter): confirm the driver on record, then "is the dispatcher information still correct?"; never the broker's own phone/email/dispatcher role. `describeContact` has `isBroker` (third-person wording, summary says "the broker contact said…"); the word "broker" is never spoken. Other (non contact-update) statuses on a broker contact use the dispatcher-style third-person defaults. Closing is the default line (not the carrier-rep one); the carrier-rep menu script and email-resend flow stay CARRIER_REPRESENTATIVE only.
+- `resultSchema.ts` extraction line for contact-update shipments now covers "a carrier representative or a broker contact"; changing it needs `npm run assistant:create`.
+- Open: MDR's answer on whether we still confirm the driver and dispatcher on record for a broker ("No need to ask because it's already provided by MDR") was ambiguous; implemented as confirm-on-record, same as the carrier rep. true/false vs "yes"/"no" for the two update fields is still unconfirmed.

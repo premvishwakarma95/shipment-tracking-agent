@@ -416,7 +416,8 @@ CallRequest (`tool_flags.ivr_steps`, `ivr_failure_reason`) and the webhook event
 - [ ] **TC-IVR-08 press limit** — more than 6 presses: call ends, `NO_ACTION`.
 - [ ] **TC-IVR-09 extension / account number requested** — agent does not enter
   digits: `IVR_NO_MATCH`, `NO_ACTION`.
-- [ ] **TC-IVR-10 real freight IVRs** (BBL Freight + numbers requested from MDR).
+- [x] **TC-IVR-11b production run (2026-11-16)** — `PROD-IVR-TEST-001`, simulator menu: key 2 -> person -> normal script, `CALL_COMPLETED`, `REACHED_PERSON`, event delivered to MDR (call 01a1e31f). Filler words seen around the menu.
+- [ ] **TC-IVR-10 real freight IVRs** (BBL Freight + numbers requested from MDR; MDR retest with Frank pending).
 - [ ] **TC-IVR-10b hold after key press (BBL Freight, call 01a1a4fe)** — after pressing 2 only recorded messages play: agent silent; when the line ends with no person (no introduction in the final transcript) event `NO_ACTION`, `ivr_navigation.outcome = IVR_NO_ANSWER`, steps kept. There is NO server hold timer (it cut a good call off, see CLAUDE.md).
 - [ ] **TC-IVR-10c person answers late (call 01a1ad03)** — a person answers 15-20 s after the key press and the conversation runs > 90 s: the call is NOT cut off, the event is the normal one (`CALL_COMPLETED` / `CALL_HANG`), never `NO_ACTION`; agent introduces itself without filler.
 - [ ] **TC-IVR-10d greeting before options (call 01a1a7f4)** — menu starts with a greeting + extension notice: the agent waits for the options, presses the right key; a failure reported before any option is heard (< 25 s) is refused.
@@ -436,3 +437,11 @@ CallRequest (`tool_flags.ivr_steps`, `ivr_failure_reason`) and the webhook event
 - `EMAIL_REQUESTED` (TC-13) has no confirmed MDR event_type — don't file
   this as a bug, it's a tracked open question.
 - IVR: the agent sometimes says a filler word around a menu, and `option_selected` / `confidence` are `null` when the model skips `reportIvrStep` — known, not a bug to re-file.
+
+### BROKER_CALL contact (2026-11-24, local)
+`contact.type: "BROKER_CALL"`, shipment `status: CONTACT_UPDATE_REQUEST`.
+- [x] **TC-BC-01 prompt render (code level)** — broker contact: third-person wording, driver-on-record + dispatcher-on-record questions, never asks the broker's own details; DISPATCHER contact unchanged.
+- [ ] **TC-BC-02 real call, both confirmed** — `contact_update: false`, `shipment_update: false`.
+- [ ] **TC-BC-03 real call, new driver or dispatcher given** — `contact_update: true`, driver/dispatcher filled for that shipment, broker's own details not copied.
+- [ ] **TC-BC-04 regression** — DRIVER / DISPATCHER / CARRIER_REPRESENTATIVE contact-update calls and a normal status call unchanged.
+- [ ] **TC-BC-05 request accepted** — `BROKER_CALL` no longer returns 400.

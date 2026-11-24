@@ -43,6 +43,7 @@ export function buildCallVariables(doc: CallRequestDoc): Record<string, string> 
         DISPATCHER: "a dispatcher",
         SECONDARY_DISPATCHER: "a secondary dispatcher",
         CARRIER_REPRESENTATIVE: "a carrier representative",
+        BROKER_CALL: "a broker contact",
       } as Record<string, string>)[doc.contact?.type ?? ""] ?? "a carrier contact",
     // Spoken at the very end of the call, drivers only.
     closing_wish: contact.isDriver ? " Drive safe." : " Have a good day.",
@@ -66,7 +67,7 @@ export function buildCallVariables(doc: CallRequestDoc): Record<string, string> 
     contact_context: contact.promptContext,
     contact_summary_note: contact.summaryNote,
     shipment_ids_text: shipments.map((s, i) => shipmentId(s, i)).join(", "),
-    shipments_block: shipments.map((s, i) => renderShipmentBlock(s, i, contact.isDispatcher || contact.isCarrierRep, shipments.length > 1, now, contact.isDriver, contact.isCarrierRep)).join("\n\n"),
+    shipments_block: shipments.map((s, i) => renderShipmentBlock(s, i, contact.isDispatcher || contact.isCarrierRep || contact.isBroker, shipments.length > 1, now, contact.isDriver, contact.isCarrierRep, contact.isBroker)).join("\n\n"),
     shipment_wording_rule: shipmentWordingRule(shipments.length),
     // Single shipment: the exact "about shipment …, route, scheduled …" text for
     // the introduction. Several shipments: none (the intro stays generic and each
@@ -178,6 +179,7 @@ function renderShipmentBlock(
   now: Date,
   speakingToDriver: boolean,
   carrierRep = false,
+  broker = false,
 ): string {
   const id = shipmentId(shipment, index);
   const status = typeof shipment.status === "string" ? shipment.status.trim() : "";
@@ -218,7 +220,13 @@ function renderShipmentBlock(
     noScheduleTransit ? inTransitQuestions(dispatcherWording, false) : questionsForStatusKey(statusKey, dispatcherWording);
   let defaultQuestions: string;
   if (statusKey === "CONTACT_UPDATE_REQUEST") {
-    defaultQuestions = carrierRep ? carrierRepContactQuestions(onRecord) : contactUpdateQuestions(isDispatcher, onRecord);
+    // A broker contact (BROKER_CALL) is, like a carrier rep, neither the driver
+    // nor the dispatcher: only the driver and dispatcher on record are checked.
+    defaultQuestions = carrierRep
+      ? carrierRepContactQuestions(onRecord)
+      : broker
+      ? carrierRepContactQuestions(onRecord, "a broker contact (never say the word \"broker\" aloud)")
+      : contactUpdateQuestions(isDispatcher, onRecord);
   } else if (carrierRep) {
     defaultQuestions = carrierRepShipmentGuide({
       first: index === 0,
@@ -397,6 +405,7 @@ function describeContact(contact: CallRequestDoc["contact"] | undefined): {
   isDispatcher: boolean;
   isDriver: boolean;
   isCarrierRep: boolean;
+  isBroker: boolean;
   promptContext: string;
   summaryNote: string;
 } {
@@ -412,20 +421,24 @@ function describeContact(contact: CallRequestDoc["contact"] | undefined): {
       CARRIER_MAIN: "carrier representative",
       CARRIER_REPRESENTATIVE: "carrier representative",
       AFTER_HOURS: "after-hours contact",
+      BROKER_CALL: "broker contact",
     } as Record<string, string>
   )[type] ?? "contact";
 
   const isCarrierRep = type === "CARRIER_REPRESENTATIVE";
+  const isBroker = type === "BROKER_CALL";
 
-  const promptContext = isCarrierRep
-    ? `You are speaking with ${name}, a carrier representative — NOT the driver or the dispatcher. Whenever you ask about a driver (location, ETA, delay, delivery), refer to "the driver" in the third person; "you" always means the carrier representative.`
+  const promptContext = isBroker
+    ? `You are speaking with ${name}, a broker contact — NOT the driver or the dispatcher (never say the word "broker" aloud). Refer to "the driver" and "the dispatcher" in the third person; "you" always means the person you are speaking with.`
+    : isCarrierRep
+    ?`You are speaking with ${name}, a carrier representative — NOT the driver or the dispatcher. Whenever you ask about a driver (location, ETA, delay, delivery), refer to "the driver" in the third person; "you" always means the carrier representative.`
     : isDispatcher
     ? `You are speaking with ${name}, the ${role} — NOT the driver. Whenever you ask about the driver (location, ETA, delay, delivery), refer to "the driver" in the third person; "you" always means the ${role}.`
     : `You are speaking with ${name}, the ${role}. "You" in the questions below refers to them.`;
 
-  const summaryNote = isDispatcher || isCarrierRep
+  const summaryNote = isDispatcher || isCarrierRep || isBroker
     ? `The person on this call is the ${role} — NOT the driver. In every call_summary, attribute what they said to "the ${role}" (e.g. "The ${role} said the driver is ..."), and never call them "the driver".`
     : `The person on this call is the ${role}. In every call_summary, attribute what they said to "the ${role}", not to a different role.`;
 
-  return { isDispatcher, isDriver: type === "DRIVER", isCarrierRep, promptContext, summaryNote };
+  return { isDispatcher, isDriver: type === "DRIVER", isCarrierRep, isBroker, promptContext, summaryNote };
 }
