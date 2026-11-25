@@ -11,9 +11,11 @@ export const CONTACT_TYPES = [
   // payload sent "CARRIER REPRESENTATIVE" with a space, which doesn't
   // match this enum's SCREAMING_SNAKE_CASE convention.
   "CARRIER_REPRESENTATIVE",
-  // Added 2026-11-24 (MDR): BROKER_CALL contacts. Same contact-update flow and
-  // result as CONTACT_UPDATE_REQUEST (the shipments carry that status).
+  // Added 2026-11-24 (MDR): broker contacts. MDR first said BROKER_CALL, then
+  // (2026-11-25) confirmed contact.type BROKER; both are accepted and both get
+  // the full carrier-representative call flow.
   "BROKER_CALL",
+  "BROKER",
 ] as const;
 
 // The event_type vocabulary confirmed in the MDR Agent 3 Voice API

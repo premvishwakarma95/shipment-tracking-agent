@@ -44,6 +44,7 @@ export function buildCallVariables(doc: CallRequestDoc): Record<string, string> 
         SECONDARY_DISPATCHER: "a secondary dispatcher",
         CARRIER_REPRESENTATIVE: "a carrier representative",
         BROKER_CALL: "a broker contact",
+        BROKER: "a broker contact",
       } as Record<string, string>)[doc.contact?.type ?? ""] ?? "a carrier contact",
     // Spoken at the very end of the call, drivers only.
     closing_wish: contact.isDriver ? " Drive safe." : " Have a good day.",
@@ -222,10 +223,10 @@ function renderShipmentBlock(
   if (statusKey === "CONTACT_UPDATE_REQUEST") {
     // A broker contact (BROKER_CALL) is, like a carrier rep, neither the driver
     // nor the dispatcher: only the driver and dispatcher on record are checked.
-    defaultQuestions = carrierRep
-      ? carrierRepContactQuestions(onRecord)
-      : broker
+    defaultQuestions = broker
       ? carrierRepContactQuestions(onRecord, "a broker contact (never say the word \"broker\" aloud)")
+      : carrierRep
+      ? carrierRepContactQuestions(onRecord)
       : contactUpdateQuestions(isDispatcher, onRecord);
   } else if (carrierRep) {
     defaultQuestions = carrierRepShipmentGuide({
@@ -422,11 +423,16 @@ function describeContact(contact: CallRequestDoc["contact"] | undefined): {
       CARRIER_REPRESENTATIVE: "carrier representative",
       AFTER_HOURS: "after-hours contact",
       BROKER_CALL: "broker contact",
+      BROKER: "broker contact",
     } as Record<string, string>
   )[type] ?? "contact";
 
-  const isCarrierRep = type === "CARRIER_REPRESENTATIVE";
-  const isBroker = type === "BROKER_CALL";
+  // MDR (2026-11-25): a broker contact gets the SAME call flow as a carrier
+  // representative (intro, options menu, updates / contact changes / email), so
+  // isCarrierRep is true for it too; isBroker only changes the wording (never
+  // say "broker" aloud).
+  const isBroker = type === "BROKER" || type === "BROKER_CALL";
+  const isCarrierRep = type === "CARRIER_REPRESENTATIVE" || isBroker;
 
   const promptContext = isBroker
     ? `You are speaking with ${name}, a broker contact — NOT the driver or the dispatcher (never say the word "broker" aloud). Refer to "the driver" and "the dispatcher" in the third person; "you" always means the person you are speaking with.`

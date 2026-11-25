@@ -172,7 +172,7 @@ async function applyToolCall(doc: CallRequestDoc, call: VapiToolCall): Promise<s
       // resend request. The model either skipped the resend line and hung up, or
       // (with a tool-level message) went silent for ~15 s (calls 01a18204,
       // 01a18214), so OUR server says the line + closing and ends the call.
-      if (doc.contact?.type === "CARRIER_REPRESENTATIVE" && doc.control_url) {
+      if (["CARRIER_REPRESENTATIVE", "BROKER", "BROKER_CALL"].includes(doc.contact?.type ?? "") && doc.control_url) {
         await sayAndEndCall(doc.control_url, `${EMAIL_RESENT_LINE} ${CARRIER_REP_CLOSING}`);
         return "Recorded. The system is confirming the resend to the caller and ending the call — say nothing and call no tool.";
       }
