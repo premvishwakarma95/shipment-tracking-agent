@@ -167,7 +167,10 @@ async function applyToolCall(doc: CallRequestDoc, call: VapiToolCall): Promise<s
       // No separate event_type (MDR confirmed 2026-10-23): the flag is sent as
       // email_requested in each shipment's result, see buildCommonResult.
       doc.tool_flags.email_requested = true;
-      doc.tool_flags.requested_email = (args.requested_email as string) ?? null;
+      // MDR (2026-11-25): a different address given on the call takes priority;
+      // when the contact just confirms the one on file (the model passes nothing)
+      // requested_email is the address on file, not null.
+      doc.tool_flags.requested_email = resolveRequestedEmail(args.requested_email, doc.contact?.email);
       // Carrier representative: MDR wants the call to simply wrap up after a
       // resend request. The model either skipped the resend line and hung up, or
       // (with a tool-level message) went silent for ~15 s (calls 01a18204,
@@ -614,6 +617,24 @@ const EMAIL_ONLY_SUMMARY =
   "The contact asked for the update email to be resent; no shipment update was given for this shipment on this call.";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Spoken "name at example dot com" -> "name@example.com"; anything else is
+// returned trimmed. Only used when the raw value is not already an address.
+function normalizeSpokenEmail(raw: string): string {
+  const trimmed = raw.trim();
+  if (EMAIL_PATTERN.test(trimmed)) return trimmed;
+  return trimmed.replace(/\s+at\s+/gi, "@").replace(/\s+dot\s+/gi, ".").replace(/\s+/g, "");
+}
+
+// The address MDR should resend to: the one the contact gave (priority), else
+// the one on file, else null. A given-but-unusable address stays unusable (null
+// downstream) rather than silently becoming the on-file one.
+function resolveRequestedEmail(given: unknown, onFile: string | null | undefined): string | null {
+  const spoken = typeof given === "string" ? given.trim() : "";
+  if (spoken) return normalizeSpokenEmail(spoken);
+  const fallback = typeof onFile === "string" ? onFile.trim() : "";
+  return fallback || null;
+}
 
 // Reconstructs a nested ContactInfo from resultSchema.ts's flat
 // driver_*/dispatcher_* extraction fields — null (not an all-null object)
