@@ -56,6 +56,7 @@ export function buildCallVariables(doc: CallRequestDoc): Record<string, string> 
     carrier_rep_script: contact.isCarrierRep
       ? carrierRepScript({
           count: shipments.length,
+          broker: contact.isBroker,
           callingFrom: doc.calling_from?.trim() || "our company",
           greetingName: greetingName(doc.contact?.name),
           email: typeof doc.contact?.email === "string" && doc.contact.email.trim() ? doc.contact.email.trim() : null,

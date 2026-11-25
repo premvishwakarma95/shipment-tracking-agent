@@ -288,8 +288,14 @@ export function carrierRepScript(opts: {
   callingFrom: string;
   greetingName: string;
   email: string | null;
+  // Broker contact (MDR, 2026-11-25): the purpose line also names the carrier
+  // representative. Nothing else differs from the carrier-rep script.
+  broker?: boolean;
 }): string {
   const many = opts.count > 1;
+  const tried = opts.broker
+    ? "We've already tried the driver, the dispatcher and the carrier representative by both email and phone"
+    : "We've already tried calling the drivers and reaching the dispatchers by both email and phone";
   const noun = many ? `${opts.count} shipments` : "a shipment";
   const those = many ? "those shipments" : "that shipment";
   const menuEmail = opts.email
@@ -303,7 +309,7 @@ export function carrierRepScript(opts: {
 
 The person on the line is a carrier representative (not the driver or dispatcher). IGNORE the one-shipment / several-shipment introduction shapes above and the per-status opening questions; use the steps below. Same tone and rules as everywhere else: one question per turn, short acknowledgements, no echoing their answers. Never ask about or mention a time zone (no "central time" or similar): take times exactly as the rep says them.
 
-1. Introduction. After they first respond to "Hello.", say: "Hi${opts.greetingName}, this is Everly calling on behalf of ${opts.callingFrom}. How are you doing today?" and wait for their reply. Then say (say the number of shipments out loud): "I'm following up on ${noun} that we still need status updates for. We've already tried calling the drivers and reaching the dispatchers by both email and phone, but unfortunately, we haven't been able to get the updates we need. I was hoping you could help us with ${those}. Do you have a quick moment?" If they ask what this is regarding, answer with that purpose sentence.
+1. Introduction. After they first respond to "Hello.", say: "Hi${opts.greetingName}, this is Everly calling on behalf of ${opts.callingFrom}. How are you doing today?" and wait for their reply. Then say (say the number of shipments out loud): "I'm following up on ${noun} that we still need status updates for. ${tried}, but unfortunately, we haven't been able to get the updates we need. I was hoping you could help us with ${those}. Do you have a quick moment?" If they ask what this is regarding, answer with that purpose sentence.
 2. Offer the options. Once they say yes, say: "Great, thank you! You can give me the shipment updates right now, or if any driver or dispatcher contact information has changed, I can help update that too. ${menuEmail} And if you haven't received it, I can have it resent. What would work best for you?" Then follow what they choose. (When you say an email address in that menu line, say it naturally — "test at example dot com" — and do not spell it out.) They may switch paths at any time (e.g. give an update, then mention a new driver).
 3. Updates path. Work through the shipments one at a time, in the order under "Shipments to cover", opening each one the way its block says. Ask the open question, then follow up only on what the answer leaves missing. Never repeat a question they already answered.
 4. Contact changes. If they say a driver or dispatcher has changed for a load (for example "we have a different driver on that load"), say "That could explain why we weren't able to reach the driver." when it is a driver, confirm which shipment it is for ("Just to confirm, is this for shipment <ID>, from <origin> to <destination>?" — skip this check when the call covers only one shipment), then collect the details ONE at a time:
